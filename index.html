@@ -40,12 +40,16 @@
   <label><input type="checkbox" id="optPoints" checked> Bohrpunkte</label>
   <label><input type="checkbox" id="optRelief" checked> Relief</label>
   <label><input type="checkbox" id="optNames" checked> Straßennamen</label>
+  <label><input type="checkbox" id="optOwn" checked> Eigene Bohrungen</label>
+  <button type="button" id="btnNewOwn">＋ Neue Bohrung</button>
+  <button type="button" class="ghost" id="btnMyOwn">Meine Bohrungen</button>
 </header>
 <main>
   <div id="map" role="application" aria-label="Karte des Landkreises Oberhavel"></div>
   <aside id="side">
     <h2>Standort auswählen</h2>
     <p class="hint">Tippe oder klicke in die Karte oder suche einen Ort. Die App berechnet sofort aus den Bohrungen im Umkreis ein geschätztes Schichtenverzeichnis mit Vermutung zu den Grundwasserleitern. Alles läuft ohne Internet.</p>
+    <div id="ownPanel"></div>
     <div class="offline-note" id="stand"></div>
     <div id="aquifer"></div>
     <div id="avgBox"></div>
@@ -72,6 +76,7 @@ if ("serviceWorker" in navigator && location.protocol === "https:") navigator.se
 <script src="data/aquifer.js?v=4"></script>
 <script src="data/boreholes.js?v=4"></script>
 <script src="profil.js"></script>
+<script src="eigene.js"></script>
 <script>
 (function () {
   var esc = PROFIL.esc, fmtN = PROFIL.fmtN, isAquifer = PROFIL.isAquifer;
@@ -300,7 +305,7 @@ if ("serviceWorker" in navigator && location.protocol === "https:") navigator.se
     detailEl.hidden = true;
     renderAquifer(lat, lon);
     var list = [];
-    B.forEach(function (b) {
+    B.concat(window.EIGENE ? EIGENE.asBohrungen() : []).forEach(function (b) {
       var d = dist(lat, lon, b.a, b.o);
       if (d <= r) list.push({ b: b, d: d, on: true });
     });
@@ -329,7 +334,7 @@ if ("serviceWorker" in navigator && location.protocol === "https:") navigator.se
       var b = it.b;
       html += '<li data-i="' + i + '"><input type="checkbox" class="chk" aria-label="Bohrung ' + esc(b.n) + ' auswählen" checked>' +
         '<div class="body"><div class="row"><span class="name">' + esc(b.n || "ohne Namen") + '</span><span class="meta">' + fmtM(it.d) + '</span></div>' +
-        '<div class="meta">Tiefe ' + (b.t ? fmtN(b.t) : "?") + ' m · ' + (b.l ? "Schichten gelesen" : "Schichten nicht lesbar") + '</div></div></li>';
+        '<div class="meta">Tiefe ' + (b.t ? fmtN(b.t) : "?") + ' m · ' + (b.eigen ? "eigene Bohrung" : b.l ? "Schichten gelesen" : "Schichten nicht lesbar") + '</div></div></li>';
       it.mk = L.circleMarker([b.a, b.o], { radius: 6, color: b.l ? "#b8321c" : "#8a94a0", weight: 2, fillOpacity: 0.7 }).addTo(boreMarkers).on("click", function () { select(i); });
     });
     resultsEl.innerHTML = html + '</ul>';
@@ -405,13 +410,18 @@ if ("serviceWorker" in navigator && location.protocol === "https:") navigator.se
       html += '</table><p class="meta">Schichten vorab per Texterkennung aus dem Bild des Landes gelesen; einzelne Nachkommastellen können abweichen.</p>';
     } else html += '<p class="hint">Die Schichten dieser Bohrung ließen sich nicht sicher auslesen.</p>';
     if (b.p) html += '<div class="gok">Originalbild des Landes</div><div class="imgwrap"><img alt="Schichtenverzeichnis" src="img/' + esc(b.i) + '.png" onerror="this.parentNode.innerHTML=\'<p class=hint>Bild nicht im Paket enthalten.</p>\'"></div>';
-    else html += '<p class="meta">Originalbild des Landes (nur mit Internet): <a href="https://geo.brandenburg.de/karten/bpk24/x' + esc(b.i) + '.png" target="_blank" rel="noopener">öffnen</a></p>';
+    else if (!b.eigen) html += '<p class="meta">Originalbild des Landes (nur mit Internet): <a href="https://geo.brandenburg.de/karten/bpk24/x' + esc(b.i) + '.png" target="_blank" rel="noopener">öffnen</a></p>';
     detailEl.innerHTML = html;
     map.panTo([b.a, b.o], { animate: false });
   }
 
   document.getElementById("toMap").addEventListener("click", function () { window.scrollTo(0, 0); });
-  map.on("click", function (e) { search(e.latlng.lat, e.latlng.lng); });
+  EIGENE.init({ map: map, panel: document.getElementById("ownPanel"), esc: esc, fmtN: fmtN,
+    onChange: function () { if (marker) { var p = marker.getLatLng(); search(p.lat, p.lng); } } });
+  document.getElementById("btnNewOwn").addEventListener("click", function () { EIGENE.open(); });
+  document.getElementById("btnMyOwn").addEventListener("click", function () { EIGENE.list(); });
+  document.getElementById("optOwn").addEventListener("change", function (e) { EIGENE.setVisible(e.target.checked); });
+  map.on("click", function (e) { if (EIGENE.handleMapClick(e)) return; search(e.latlng.lat, e.latlng.lng); });
   document.getElementById("radius").addEventListener("change", function () { if (marker) { var p = marker.getLatLng(); search(p.lat, p.lng); } });
   document.getElementById("searchForm").addEventListener("submit", function (e) {
     e.preventDefault();
