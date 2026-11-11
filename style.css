@@ -88,6 +88,8 @@
 
 /* Eigene Bohrungen */
 .own-marker span { display: block; width: 14px; height: 14px; margin: 2px; background: #1565c0; border: 2px solid #fff; transform: rotate(45deg); box-shadow: 0 0 3px rgba(0,0,0,.6); }
+.shared-marker span { background: #2e7d32; }
+.own-share { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; margin: 8px 0; }
 .own-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
 .own-grid label { display: flex; flex-direction: column; font-size: 13px; gap: 3px; }
 input[type=number], input[type=date], input[type=text] { font: inherit; padding: 6px 8px; border: 1px solid #b8c0c8; border-radius: 8px; background: #fff; color: inherit; min-width: 0; }

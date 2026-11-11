@@ -369,7 +369,7 @@ if ("serviceWorker" in navigator && location.protocol === "https:") navigator.se
       var b = it.b;
       html += '<li data-i="' + i + '"><input type="checkbox" class="chk" aria-label="Bohrung ' + esc(b.n) + ' auswählen" checked>' +
         '<div class="body"><div class="row"><span class="name">' + esc(b.n || "ohne Namen") + '</span><span class="meta">' + fmtM(it.d) + '</span></div>' +
-        '<div class="meta">Tiefe ' + (b.t ? fmtN(b.t) : "?") + ' m · ' + (b.eigen ? "eigene Bohrung" : b.l ? "Schichten gelesen" : "Schichten nicht lesbar") + '</div></div></li>';
+        '<div class="meta">Tiefe ' + (b.t ? fmtN(b.t) : "?") + ' m · ' + (b.geteilt ? "geteilte Bohrung" : b.eigen ? "eigene Bohrung" : b.l ? "Schichten gelesen" : "Schichten nicht lesbar") + '</div></div></li>';
       it.mk = L.circleMarker([b.a, b.o], { radius: 6, color: b.l ? "#b8321c" : "#8a94a0", weight: 2, fillOpacity: 0.7 }).addTo(boreMarkers).on("click", function () { select(i); });
     });
     resultsEl.innerHTML = html + '</ul>';
