@@ -1,6 +1,6 @@
 /* Service Worker: legt beim ersten Aufruf alle Dateien der Seite im Speicher des Geräts ab, danach läuft sie ohne Internet.
  * Zum Aktualisieren der Daten die Versionsnummer VERSION erhöhen. */
-var VERSION = "oberhavel-9";
+var VERSION = "oberhavel-10";
 var DATEIEN = [
   "./", "index.html", "style.css", "profil.js", "eigene.js", "manifest.webmanifest", "icon-180.png", "icon-512.png",
   "lib/leaflet.js", "lib/leaflet.css", "lib/images/layers.png", "lib/images/layers-2x.png",
@@ -17,6 +17,6 @@ self.addEventListener("activate", function (e) {
   }).then(function () { return self.clients.claim(); }));
 });
 self.addEventListener("fetch", function (e) {
-  if (e.request.method !== "GET") return;
+  if (e.request.method !== "GET" || e.request.url.indexOf("api.github.com") >= 0) return;
   e.respondWith(caches.match(e.request, { ignoreSearch: true }).then(function (hit) { return hit || fetch(e.request); }));
 });
