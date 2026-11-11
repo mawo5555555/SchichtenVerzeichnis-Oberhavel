@@ -1,6 +1,6 @@
 /* Service Worker: legt beim ersten Aufruf alle Dateien der Seite im Speicher des Geräts ab, danach läuft sie ohne Internet.
  * Zum Aktualisieren der Daten die Versionsnummer VERSION erhöhen. */
-var VERSION = "oberhavel-7";
+var VERSION = "oberhavel-9";
 var DATEIEN = [
   "./", "index.html", "style.css", "profil.js", "eigene.js", "manifest.webmanifest", "icon-180.png", "icon-512.png",
   "lib/leaflet.js", "lib/leaflet.css", "lib/images/layers.png", "lib/images/layers-2x.png",

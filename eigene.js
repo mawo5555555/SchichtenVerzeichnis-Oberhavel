@@ -12,7 +12,7 @@
   var CATOF = {};
   ARTEN.forEach(function (g) { g.items.forEach(function (it) { CATOF[it[0]] = it[1]; }); });
   CATOF["Mutterboden"] = "Auffüllung / Boden";
-  var GWLOPT = [["", "Grundwasserleiter: –"], ["beginn", "GWL Beginn (Oberkante)"], ["ende", "GWL Ende (Unterkante)"], ["beides", "GWL Beginn und Ende"]];
+  var GWLOPT = [["", "ohne Grundwasserleiter"], ["beginn", "GWL Beginn (Oberkante)"], ["ende", "GWL Ende (Unterkante)"], ["beides", "GWL Beginn und Ende"]];
   var GWLTXT = { beginn: "GWL Beginn", ende: "GWL Ende", beides: "GWL Beginn und Ende" };
   var BEIMENGUNG = ["", "schluffig", "tonig", "sandig", "kiesig", "humos", "steinig"];
 
@@ -30,10 +30,18 @@
   function depthOf(b) { return b.layers.length ? b.layers[b.layers.length - 1].bis : 0; }
 
   // Schichten als [von, bis, Text, Kategorie] für Säule und Schätzung
+  // Sand und Kies gelten nur dann als Grundwasserleiter (rot), wenn der Nutzer ihn aktiv markiert hat; sonst gedämpfte Farbe
+  function catFor(l, ivs) {
+    var cat = CATOF[l.art] || "Sonstiges";
+    if (!PROFIL.isAquifer(cat)) return cat;
+    var mid = (l.von + l.bis) / 2;
+    var inG = ivs.some(function (p) { return mid >= p[0] && mid <= p[1]; });
+    return inG ? cat : (cat === "Kies" ? "Kies (ohne GWL)" : "Sand (ohne GWL)");
+  }
   function layersOf(b) {
-    var prev = 0;
+    var prev = 0, ivs = gwlList(b.layers);
     return b.layers.filter(function (l) { return l.art; }).map(function (l) {
-      var r = [l.von != null ? l.von : prev, l.bis, textOf(l), CATOF[l.art] || "Sonstiges"];
+      var r = [l.von != null ? l.von : prev, l.bis, textOf(l), catFor(l, ivs)];
       prev = l.bis; return r;
     });
   }
@@ -147,7 +155,8 @@
   function preview() {
     var el = panel.querySelector("#oPreview");
     if (!el) return;
-    var layers = draft.layers.map(function (l) { return [l.von, l.bis, l.art ? textOf(l) : "noch nicht angesprochen", l.art ? (CATOF[l.art] || "Sonstiges") : "Sonstiges"]; });
+    var ivsP = gwlList(draft.layers);
+    var layers = draft.layers.map(function (l) { return [l.von, l.bis, l.art ? textOf(l) : "noch nicht angesprochen", l.art ? catFor(l, ivsP) : "Sonstiges"]; });
     el.innerHTML = '<div class="gok">▼ 0 m = Geländeoberkante</div>' + PROFIL.drawColumn(layers) + '<div class="gok">▲ Endteufe ' + fmtN(depthOf(draft)) + ' m</div>' + (gwlList(draft.layers).length ? '<p class="meta">Grundwasserleiter: ' + gwlText(draft.layers) + '</p>' : '');
   }
 
@@ -183,14 +192,14 @@
   function show(id) {
     var b = all.find(function (x) { return x.id === id; });
     if (!b) return;
-    var lay = layersOf(b);
+    var lay = layersOf(b), gwlIvs = gwlList(b.layers);
     var h = '<h2>' + esc(b.name) + '</h2><table class="facts"><tr><td>Datum</td><td>' + esc(b.datum) + '</td></tr><tr><td>Standort</td><td>' + b.lat.toFixed(5) + " N, " + b.lon.toFixed(5) + ' O</td></tr>' +
       '<tr><td>Geländehöhe</td><td>' + (b.hoehe != null ? fmtN(b.hoehe) + " m NHN" : "keine Angabe") + '</td></tr><tr><td>Endteufe</td><td>' + fmtN(depthOf(b)) + ' m</td></tr><tr><td>Grundwasserleiter (GWL)</td><td>' + (gwlText(b.layers) || "nicht markiert") + '</td></tr></table>' +
-      '<div class="legend"><span><span class="sw" style="background:#e53935"></span>rot = Grundwasserleiter (Sand, Kies)</span></div>' +
+      '<div class="legend"><span><span class="sw" style="background:#e53935"></span>rot = von dir als Grundwasserleiter markiert</span></div>' +
       '<div class="gok">▼ 0 m = Geländeoberkante</div>' + PROFIL.drawColumn(lay) + '<div class="gok">▲ Endteufe ' + fmtN(depthOf(b)) + ' m</div>' +
       '<table class="layers"><tr><td class="meta">Tiefe (m)</td><td class="meta">Bodenart</td><td class="meta">Bemerkung</td></tr>';
     b.layers.forEach(function (l) {
-      var aq = PROFIL.isAquifer(CATOF[l.art]);
+      var aq = gwlIvs.some(function (p) { return (l.von + l.bis) / 2 >= p[0] && (l.von + l.bis) / 2 <= p[1]; });
       h += '<tr class="' + (aq ? "gwl" : "") + '"><td>' + fmtN(l.von) + " – " + fmtN(l.bis) + '</td><td>' + esc(textOf(l)) + (aq ? " (Grundwasserleiter)" : "") + (l.gwl ? " · " + GWLTXT[l.gwl] : "") + '</td><td>' + esc(l.bem || "") + '</td></tr>';
     });
     h += '</table><div class="tools"><button type="button" class="ghost" id="oEdit">Bearbeiten</button><button type="button" class="ghost" id="oCsv">Als CSV</button>' +

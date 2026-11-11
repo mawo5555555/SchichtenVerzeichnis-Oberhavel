@@ -16,6 +16,7 @@
   #map { background: #e9efe6; }
   .leaflet-container { font: inherit; }
   .place { background: transparent; border: 0; box-shadow: none; color: #26303b; font-size: 12px; font-weight: 600; text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 3px #fff; padding: 0; }
+  .sat .place { color: #fff; text-shadow: 0 0 3px #000, 0 0 3px #000, 0 0 5px #000; }
   .place.village { font-weight: 500; font-size: 11px; }
   .offline-note { background: var(--accent-soft); color: var(--accent); border-radius: 8px; padding: 8px 10px; font-size: 13px; margin: 12px 0; }
 </style>
@@ -39,6 +40,7 @@
   </label>
   <label><input type="checkbox" id="optPoints" checked> Bohrpunkte</label>
   <label><input type="checkbox" id="optRelief" checked> Relief</label>
+  <label>Ansicht <select id="baseSel"><option value="map">Karte</option><option value="sat">Satellit</option></select></label>
   <label><input type="checkbox" id="optNames" checked> Straßennamen</label>
   <label><input type="checkbox" id="optOwn" checked> Eigene Bohrungen</label>
   <button type="button" id="btnNewOwn">＋ Neue Bohrung</button>
@@ -61,7 +63,7 @@
 <button type="button" id="toMap" aria-label="Zurück zur Karte">↑ Karte</button>
 <footer>
   Daten: © <a href="https://lbgr.brandenburg.de" target="_blank" rel="noopener">Landesamt für Bergbau, Geologie und Rohstoffe Brandenburg</a>,
-  Datenlizenz Deutschland – Namensnennung – Version 2.0. Karte: © OpenStreetMap-Mitwirkende (ODbL). Prototyp, ohne Gewähr.
+  Datenlizenz Deutschland – Namensnennung – Version 2.0. Karte: © OpenStreetMap-Mitwirkende (ODbL). Luftbilder (Satellit, nur online): © GeoBasis-DE/LGB, dl-de/by-2-0. Prototyp, ohne Gewähr.
 </footer>
 
 <script>
@@ -94,11 +96,12 @@ if ("serviceWorker" in navigator && location.protocol === "https:") navigator.se
   var kreisLayer = L.polygon(ring, { color: "#3b4a5a", weight: 2, fill: false, interactive: false }).addTo(map);
   map.fitBounds(kreisLayer.getBounds());
 
+  var satMode = false, vecGroup = L.layerGroup().addTo(map);
   var cv = L.canvas({ padding: 0.3 });
-  BASE.seen.forEach(function (s) { L.polygon(s.p, { renderer: cv, color: "#8fb6d9", weight: 1, fillColor: "#cfe3f3", fillOpacity: 1, interactive: false }).addTo(map); });
-  BASE.fluesse.forEach(function (f) { L.polyline(f.p, { renderer: cv, color: "#8fb6d9", weight: 1.5, interactive: false }).addTo(map); });
+  BASE.seen.forEach(function (s) { L.polygon(s.p, { renderer: cv, color: "#8fb6d9", weight: 1, fillColor: "#cfe3f3", fillOpacity: 1, interactive: false }).addTo(vecGroup); });
+  BASE.fluesse.forEach(function (f) { L.polyline(f.p, { renderer: cv, color: "#8fb6d9", weight: 1.5, interactive: false }).addTo(vecGroup); });
   var ROAD = { motorway: ["#d9822b", 3], trunk: ["#e0a243", 2.5], primary: ["#e8b85c", 2], secondary: ["#bdbdbd", 1.5] };
-  BASE.strassen.forEach(function (s) { var st = ROAD[s.k] || ["#ccc", 1]; L.polyline(s.p, { renderer: cv, color: st[0], weight: st[1], interactive: false }).addTo(map); });
+  BASE.strassen.forEach(function (s) { var st = ROAD[s.k] || ["#ccc", 1]; L.polyline(s.p, { renderer: cv, color: st[0], weight: st[1], interactive: false }).addTo(vecGroup); });
 
   // Detailebene (Nebenstraßen, Wohnstraßen, Bahn): erst ab Zoomstufe 13 gezeichnet, damit die Karte bei Übersicht flüssig bleibt
   var detailLayer = L.layerGroup();
@@ -106,7 +109,7 @@ if ("serviceWorker" in navigator && location.protocol === "https:") navigator.se
   var detailCv = L.canvas({ padding: 0.2 });
   (window.BASEMAP_DETAIL.strassen || []).forEach(function (s) { var st = DET[s.k] || ["#ccc", 1]; L.polyline(s.p, { renderer: detailCv, color: st[0], weight: st[1], interactive: false }).addTo(detailLayer); });
   (window.BASEMAP_DETAIL.bahn || []).forEach(function (p) { L.polyline(p, { renderer: detailCv, color: "#7b7b7b", weight: 1.2, dashArray: "5 4", interactive: false }).addTo(detailLayer); });
-  function detailVisibility() { if (map.getZoom() >= 13) { if (!map.hasLayer(detailLayer)) detailLayer.addTo(map); } else if (map.hasLayer(detailLayer)) map.removeLayer(detailLayer); }
+  function detailVisibility() { if (map.getZoom() >= 13 && !satMode) { if (!map.hasLayer(detailLayer)) detailLayer.addTo(map); } else if (map.hasLayer(detailLayer)) map.removeLayer(detailLayer); }
   map.on("zoomend", detailVisibility); detailVisibility();
 
   /* ---------- Topografie: Relief (Schummerung) und Höhenlinien aus dem Höhenraster ---------- */
@@ -214,11 +217,36 @@ if ("serviceWorker" in navigator && location.protocol === "https:") navigator.se
       if (clash) continue;
       placed.push({ x: pm.x, y: pm.y, hw: hw, hh: hh }); done[key] = true;
       ctx.save(); ctx.translate(pm.x, pm.y); ctx.rotate(ang);
-      ctx.strokeStyle = "rgba(255,255,255,.9)"; ctx.lineWidth = 3; ctx.strokeText(s.n, 0, 0);
-      ctx.fillStyle = "#3a3a3a"; ctx.fillText(s.n, 0, 0); ctx.restore();
+      ctx.strokeStyle = satMode ? "rgba(0,0,0,.85)" : "rgba(255,255,255,.9)"; ctx.lineWidth = 3; ctx.strokeText(s.n, 0, 0);
+      ctx.fillStyle = satMode ? "#ffffff" : "#3a3a3a"; ctx.fillText(s.n, 0, 0); ctx.restore();
     }
   }
   map.on("moveend zoomend resize", drawLabels); document.getElementById("optNames").addEventListener("change", drawLabels); drawLabels();
+
+  /* ---------- Ansicht: Karte oder Satellit (Luftbilder des Landes Brandenburg, braucht Internet) ---------- */
+  var satLayer = L.tileLayer.wms("https://isk.geobasis-bb.de/mapproxy/dop20c/service/wms", { layers: "bebb_dop20c", format: "image/jpeg", version: "1.3.0", maxZoom: 18, attribution: "© GeoBasis-DE/LGB, dl-de/by-2-0" });
+  var reliefBefore = null;
+  function setBase(mode) {
+    satMode = mode === "sat";
+    map.getContainer().classList.toggle("sat", satMode);
+    var rel = document.getElementById("optRelief");
+    if (satMode) {
+      satLayer.addTo(map); satLayer.bringToBack();
+      if (map.hasLayer(vecGroup)) map.removeLayer(vecGroup);
+      reliefBefore = rel.checked; rel.checked = false;
+    } else {
+      if (map.hasLayer(satLayer)) map.removeLayer(satLayer);
+      if (!map.hasLayer(vecGroup)) vecGroup.addTo(map);
+      if (reliefBefore !== null) rel.checked = reliefBefore;
+    }
+    kreisLayer.setStyle({ color: satMode ? "#ffd54f" : "#3b4a5a" });
+    reliefVisibility(); detailVisibility(); drawLabels();
+    document.getElementById("baseSel").value = mode;
+    try { localStorage.setItem("schichten.basis", mode); } catch (e) {}
+  }
+  document.getElementById("baseSel").addEventListener("change", function (e) { setBase(e.target.value); });
+  try { if (localStorage.getItem("schichten.basis") === "sat") setBase("sat"); } catch (e) {}
+
 
   // Orte in Stufen, damit die Karte beim Hineinzoomen immer mehr zeigt: Städte, Dörfer, Ortsteile und Weiler, kleine Siedlungen und Einzelhöfe
   var PLACE_TIER = { city: 0, town: 0, village: 1, suburb: 2, quarter: 2, hamlet: 2, neighbourhood: 3, locality: 3, isolated_dwelling: 3, farm: 3 };

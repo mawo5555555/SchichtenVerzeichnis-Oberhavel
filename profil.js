@@ -10,7 +10,7 @@
   var CAT_COL = {
     "Feinsand": "#f4a6a6", "Mittelsand": "#e57373", "Grobsand": "#d32f2f", "Sand (o. n. A.)": "#ef5350", "Kies": "#8e1b1b",
     "Geschiebemergel / Lehm": "#a8a29e", "Ton": "#6f6760", "Schluff": "#c9c4b8", "Torf / Mudde": "#4a4036",
-    "Auffüllung / Boden": "#dcdcdc", "Braunkohle": "#262626", "Festgestein": "#52607a", "Sonstiges": "#b8b8b8"
+    "Sand (ohne GWL)": "#e6d8a2", "Kies (ohne GWL)": "#c9b57a", "Auffüllung / Boden": "#dcdcdc", "Braunkohle": "#262626", "Festgestein": "#52607a", "Sonstiges": "#b8b8b8"
   };
   function isAquifer(cat) { return AQUIFER_CATS.indexOf(cat) >= 0; }
 
