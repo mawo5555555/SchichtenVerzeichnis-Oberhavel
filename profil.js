@@ -212,5 +212,31 @@
     return html;
   }
 
-  global.PROFIL = { renderExpected: renderExpected, buildExpected: buildExpected, CAT_COL: CAT_COL, isAquifer: isAquifer, esc: esc, fmtN: fmtN };
+  // Zeichnet das Schichtenverzeichnis einer Bohrung selbst als Säule (ohne Bild des Landes): 0 m oben, Tiefen links, Gestein rechts,
+  // Sand und Kies (mögliche Grundwasserleiter) mit rotem Rand. layers = [[von, bis, Text, Kategorie], ...]
+  function drawColumn(layers) {
+    if (!layers || !layers.length) return "";
+    var total = layers[layers.length - 1][1];
+    var H = Math.max(150, Math.min(560, Math.round(total * 8))), ppm = H / total;
+    var step = total <= 12 ? 1 : total <= 30 ? 2 : total <= 80 ? 5 : total <= 200 ? 10 : 25;
+    var X0 = 64, W = 56, top = 14, svg = '<svg viewBox="0 0 340 ' + (H + 28) + '" width="100%" style="max-width:340px;display:block;margin:4px 0 6px" role="img" aria-label="Schichtenverzeichnis, 0 Meter oben">';
+    var d;
+    for (d = 0; d <= total; d += step) {
+      svg += '<line x1="' + (X0 - 6) + '" y1="' + (top + d * ppm) + '" x2="' + X0 + '" y2="' + (top + d * ppm) + '" stroke="currentColor" stroke-opacity=".5"/>' +
+             '<text x="' + (X0 - 9) + '" y="' + (top + d * ppm + 3.5) + '" text-anchor="end" font-size="10" fill="currentColor" fill-opacity=".7">' + d + ' m</text>';
+    }
+    var lastLabelY = -99;
+    layers.forEach(function (l) {
+      var y = top + l[0] * ppm, h = (l[1] - l[0]) * ppm, aq = isAquifer(l[3]);
+      svg += '<rect x="' + X0 + '" y="' + y + '" width="' + W + '" height="' + h + '" fill="' + (CAT_COL[l[3]] || "#b8b8b8") + '" stroke="' + (aq ? "#b71c1c" : "#333") + '" stroke-width="' + (aq ? 1.6 : 0.8) + '"/>';
+      var mid = y + h / 2;
+      if (h >= 11 && mid - lastLabelY >= 12) {
+        svg += '<text x="' + (X0 + W + 8) + '" y="' + (mid + 3.5) + '" font-size="11" fill="' + (aq ? "#d32f2f" : "currentColor") + '"' + (aq ? ' font-weight="600"' : '') + '>' + esc(l[2]) + '</text>';
+        lastLabelY = mid;
+      }
+    });
+    return svg + '</svg>';
+  }
+
+  global.PROFIL = { drawColumn: drawColumn, renderExpected: renderExpected, buildExpected: buildExpected, CAT_COL: CAT_COL, isAquifer: isAquifer, esc: esc, fmtN: fmtN };
 })(window);

@@ -1,11 +1,11 @@
 /* Service Worker: legt beim ersten Aufruf alle Dateien der Seite im Speicher des Geräts ab, danach läuft sie ohne Internet.
  * Zum Aktualisieren der Daten die Versionsnummer VERSION erhöhen. */
-var VERSION = "oberhavel-2";
+var VERSION = "oberhavel-4";
 var DATEIEN = [
   "./", "index.html", "style.css", "profil.js", "manifest.webmanifest", "icon-180.png", "icon-512.png",
   "lib/leaflet.js", "lib/leaflet.css", "lib/images/layers.png", "lib/images/layers-2x.png",
   "lib/images/marker-icon.png", "lib/images/marker-icon-2x.png", "lib/images/marker-shadow.png",
-  "data/boundary.js", "data/basemap.js", "data/basemap_detail.js","data/aquifer.js", "data/boreholes.js"
+  "data/boundary.js", "data/basemap.js", "data/basemap_detail.js", "data/elevation.js", "data/aquifer.js", "data/boreholes.js"
 ];
 
 self.addEventListener("install", function (e) {

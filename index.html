@@ -38,6 +38,8 @@
     </select>
   </label>
   <label><input type="checkbox" id="optPoints" checked> Bohrpunkte</label>
+  <label><input type="checkbox" id="optRelief" checked> Relief</label>
+  <label><input type="checkbox" id="optNames" checked> Straßennamen</label>
 </header>
 <main>
   <div id="map" role="application" aria-label="Karte des Landkreises Oberhavel"></div>
@@ -52,6 +54,7 @@
     <div id="detail" hidden></div>
   </aside>
 </main>
+<button type="button" id="toMap" aria-label="Zurück zur Karte">↑ Karte</button>
 <footer>
   Daten: © <a href="https://lbgr.brandenburg.de" target="_blank" rel="noopener">Landesamt für Bergbau, Geologie und Rohstoffe Brandenburg</a>,
   Datenlizenz Deutschland – Namensnennung – Version 2.0. Karte: © OpenStreetMap-Mitwirkende (ODbL). Prototyp, ohne Gewähr.
@@ -59,14 +62,15 @@
 
 <script>
 // Offline-Betrieb auf dem Handy: Dateien beim ersten Aufruf über https im Gerät speichern (nicht nötig bei Doppelklick am Mac)
-if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) navigator.serviceWorker.register("sw.js").catch(function () {});
+if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(function () {});
 </script>
 <script src="lib/leaflet.js"></script>
-<script src="data/boundary.js"></script>
-<script src="data/basemap.js"></script>
-<script src="data/basemap_detail.js"></script>
-<script src="data/aquifer.js"></script>
-<script src="data/boreholes.js"></script>
+<script src="data/boundary.js?v=4"></script>
+<script src="data/basemap.js?v=4"></script>
+<script src="data/basemap_detail.js?v=4"></script>
+<script src="data/elevation.js?v=4"></script>
+<script src="data/aquifer.js?v=4"></script>
+<script src="data/boreholes.js?v=4"></script>
 <script src="profil.js"></script>
 <script>
 (function () {
@@ -99,6 +103,117 @@ if ("serviceWorker" in navigator && (location.protocol === "https:" || location.
   (window.BASEMAP_DETAIL.bahn || []).forEach(function (p) { L.polyline(p, { renderer: detailCv, color: "#7b7b7b", weight: 1.2, dashArray: "5 4", interactive: false }).addTo(detailLayer); });
   function detailVisibility() { if (map.getZoom() >= 13) { if (!map.hasLayer(detailLayer)) detailLayer.addTo(map); } else if (map.hasLayer(detailLayer)) map.removeLayer(detailLayer); }
   map.on("zoomend", detailVisibility); detailVisibility();
+
+  /* ---------- Topografie: Relief (Schummerung) und Höhenlinien aus dem Höhenraster ---------- */
+  var EL = window.ELEVATION, reliefLayer = null, contourGroup = L.layerGroup();
+  if (EL && EL.rows) {
+    var ER = EL.rows, EC = EL.cols;
+    var elev = function (r, c) { var v = EL.dm[r * EC + c]; return v === -32768 ? null : v / 10; };
+    // Schummerung: Licht aus Nordwest, Höhenunterschiede 6-fach überhöht, weil Brandenburg flach ist
+    var cvs = document.createElement("canvas"); cvs.width = EC; cvs.height = ER;
+    var ecx = cvs.getContext("2d"), eimg = ecx.createImageData(EC, ER);
+    var cellX = EL.step_lon * 111320 * Math.cos(53 * Math.PI / 180), cellY = EL.step_lat * 111320, EXAG = 6;
+    var az = 315 * Math.PI / 180, alt = 45 * Math.PI / 180;
+    var lx = Math.cos(alt) * Math.sin(az), ly = Math.cos(alt) * Math.cos(az), lz = Math.sin(alt);
+    for (var r = 0; r < ER; r++) for (var c = 0; c < EC; c++) {
+      var r0 = Math.max(r - 1, 0), r1 = Math.min(r + 1, ER - 1), c0 = Math.max(c - 1, 0), c1 = Math.min(c + 1, EC - 1);
+      var hW = elev(r, c0), hE = elev(r, c1), hS = elev(r0, c), hN = elev(r1, c), v = 235, a = 0;
+      if (hW !== null && hE !== null && hS !== null && hN !== null) {
+        var dzdx = (hE - hW) / ((c1 - c0) * cellX) * EXAG, dzdy = (hN - hS) / ((r1 - r0) * cellY) * EXAG;
+        var nl = Math.sqrt(dzdx * dzdx + dzdy * dzdy + 1);
+        var shade = (-dzdx * lx - dzdy * ly + lz) / nl;                 // 1 = voll beleuchtet
+        v = Math.max(70, Math.min(255, 235 * shade / lz));
+        a = 255;
+      }
+      var o = (((ER - 1 - r) * EC) + c) * 4;                            // Zeile 0 liegt im Süden, im Bild unten
+      eimg.data[o] = eimg.data[o + 1] = eimg.data[o + 2] = v; eimg.data[o + 3] = a;
+    }
+    // Relief und Höhenlinien nur im Landkreis zeigen (plus ca. 1 km Rand), nicht im ganzen Rechteck
+    var mcv = document.createElement("canvas"); mcv.width = EC; mcv.height = ER;
+    var mcx = mcv.getContext("2d");
+    mcx.beginPath();
+    ring.forEach(function (p, i) {
+      var x = (p[1] - EL.origin_lon) / EL.step_lon, y = ER - 1 - (p[0] - EL.origin_lat) / EL.step_lat;
+      if (i) mcx.lineTo(x, y); else mcx.moveTo(x, y);
+    });
+    mcx.closePath(); mcx.fillStyle = "#000"; mcx.fill(); mcx.lineWidth = 8; mcx.lineJoin = "round"; mcx.strokeStyle = "#000"; mcx.stroke();
+    var mask = mcx.getImageData(0, 0, EC, ER).data;
+    for (var q = 0; q < EC * ER; q++) eimg.data[q * 4 + 3] = Math.min(eimg.data[q * 4 + 3], mask[q * 4 + 3]);
+    ecx.putImageData(eimg, 0, 0);
+    map.createPane("relief").style.zIndex = 210;
+    reliefLayer = L.imageOverlay(cvs.toDataURL(), [[EL.origin_lat, EL.origin_lon], [EL.origin_lat + (ER - 1) * EL.step_lat, EL.origin_lon + (EC - 1) * EL.step_lon]],
+      { pane: "relief", opacity: 0.5, interactive: false }).addTo(map);
+
+    // Höhenlinien alle 5 m (Marching Squares), jede 25. Linie kräftiger
+    var seg = {};
+    function put(level, x1, y1, x2, y2) {
+      (seg[level] = seg[level] || []).push([[EL.origin_lat + y1 * EL.step_lat, EL.origin_lon + x1 * EL.step_lon], [EL.origin_lat + y2 * EL.step_lat, EL.origin_lon + x2 * EL.step_lon]]);
+    }
+    for (var rr = 0; rr < ER - 1; rr++) for (var cc = 0; cc < EC - 1; cc++) {
+      var v00 = elev(rr, cc), v10 = elev(rr, cc + 1), v11 = elev(rr + 1, cc + 1), v01 = elev(rr + 1, cc);
+      if (v00 === null || v10 === null || v11 === null || v01 === null) continue;
+      if (mask[((ER - 1 - rr) * EC + cc) * 4 + 3] === 0) continue;
+      var lo = Math.min(v00, v10, v11, v01), hi = Math.max(v00, v10, v11, v01);
+      for (var lvl = Math.ceil(lo / 5) * 5; lvl <= hi; lvl += 5) {
+        var P = [];
+        if ((v00 < lvl) !== (v10 < lvl)) P.push([cc + (lvl - v00) / (v10 - v00), rr]);              // Südkante
+        if ((v10 < lvl) !== (v11 < lvl)) P.push([cc + 1, rr + (lvl - v10) / (v11 - v10)]);          // Ostkante
+        if ((v01 < lvl) !== (v11 < lvl)) P.push([cc + (lvl - v01) / (v11 - v01), rr + 1]);          // Nordkante
+        if ((v00 < lvl) !== (v01 < lvl)) P.push([cc, rr + (lvl - v00) / (v01 - v00)]);              // Westkante
+        if (P.length === 2) put(lvl, P[0][0], P[0][1], P[1][0], P[1][1]);
+        else if (P.length === 4) { put(lvl, P[0][0], P[0][1], P[3][0], P[3][1]); put(lvl, P[1][0], P[1][1], P[2][0], P[2][1]); }
+      }
+    }
+    Object.keys(seg).forEach(function (k) {
+      var idx = (parseInt(k, 10) % 25 === 0);
+      L.polyline(seg[k], { renderer: detailCv, color: idx ? "#a07a45" : "#c2a77a", weight: idx ? 1.2 : 0.7, opacity: 0.85, interactive: false }).addTo(contourGroup);
+    });
+  }
+  function reliefVisibility() {
+    var on = document.getElementById("optRelief").checked;
+    if (reliefLayer) { if (on) { if (!map.hasLayer(reliefLayer)) reliefLayer.addTo(map); } else if (map.hasLayer(reliefLayer)) map.removeLayer(reliefLayer); }
+    var cont = on && map.getZoom() >= 12;
+    if (cont) { if (!map.hasLayer(contourGroup)) contourGroup.addTo(map); } else if (map.hasLayer(contourGroup)) map.removeLayer(contourGroup);
+  }
+  map.on("zoomend", reliefVisibility); document.getElementById("optRelief").addEventListener("change", reliefVisibility); reliefVisibility();
+
+  /* ---------- Straßennamen (auf die Straße gedreht, ab Zoomstufe 14) ---------- */
+  var labelCv = document.createElement("canvas");
+  labelCv.style.cssText = "position:absolute;left:0;top:0;pointer-events:none;z-index:450";
+  map.getContainer().appendChild(labelCv);
+  var NAMED = (BASE.strassen || []).concat(window.BASEMAP_DETAIL.strassen || []).filter(function (s) { return s.n && s.p && s.p.length > 1; });
+  var RANK = { motorway: 5, trunk: 5, primary: 5, secondary: 4, tertiary: 3, unclassified: 2, residential: 1, living_street: 1 };
+  function drawLabels() {
+    var size = map.getSize(), dpr = window.devicePixelRatio || 1, ctx = labelCv.getContext("2d");
+    labelCv.width = size.x * dpr; labelCv.height = size.y * dpr; labelCv.style.width = size.x + "px"; labelCv.style.height = size.y + "px";
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    var z = map.getZoom();
+    if (!document.getElementById("optNames").checked || z < 14) return;
+    var minRank = z >= 16 ? 1 : z >= 15 ? 2 : 3, bnd = map.getBounds().pad(0.05), placed = [], done = {};
+    ctx.font = "600 11px -apple-system, system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.lineJoin = "round";
+    for (var i = 0; i < NAMED.length; i++) {
+      var s = NAMED[i];
+      if ((RANK[s.k] || 1) < minRank) continue;
+      var mi = Math.floor(s.p.length / 2), m = s.p[mi];
+      if (!bnd.contains(m)) continue;
+      var pa = map.latLngToContainerPoint(s.p[Math.max(mi - 1, 0)]), pc = map.latLngToContainerPoint(s.p[Math.min(mi + 1, s.p.length - 1)]), pm = map.latLngToContainerPoint(m);
+      var tw = ctx.measureText(s.n).width, total = 0;
+      for (var j = 1; j < s.p.length; j++) { var u = map.latLngToContainerPoint(s.p[j - 1]), w = map.latLngToContainerPoint(s.p[j]); total += Math.hypot(w.x - u.x, w.y - u.y); }
+      if (total < tw + 14) continue;                                        // Straße kürzer als ihr Name
+      var key = s.n + "|" + Math.round(pm.x / 160) + "|" + Math.round(pm.y / 160);
+      if (done[key]) continue;
+      var ang = Math.atan2(pc.y - pa.y, pc.x - pa.x);
+      if (ang > Math.PI / 2 || ang < -Math.PI / 2) ang += Math.PI;
+      var hw = Math.abs(Math.cos(ang)) * (tw / 2 + 3) + Math.abs(Math.sin(ang)) * 8, hh = Math.abs(Math.sin(ang)) * (tw / 2 + 3) + Math.abs(Math.cos(ang)) * 8, clash = false;
+      for (var q = 0; q < placed.length; q++) { var p = placed[q]; if (Math.abs(p.x - pm.x) < p.hw + hw && Math.abs(p.y - pm.y) < p.hh + hh) { clash = true; break; } }
+      if (clash) continue;
+      placed.push({ x: pm.x, y: pm.y, hw: hw, hh: hh }); done[key] = true;
+      ctx.save(); ctx.translate(pm.x, pm.y); ctx.rotate(ang);
+      ctx.strokeStyle = "rgba(255,255,255,.9)"; ctx.lineWidth = 3; ctx.strokeText(s.n, 0, 0);
+      ctx.fillStyle = "#3a3a3a"; ctx.fillText(s.n, 0, 0); ctx.restore();
+    }
+  }
+  map.on("moveend zoomend resize", drawLabels); document.getElementById("optNames").addEventListener("change", drawLabels); drawLabels();
 
   var townLayer = L.layerGroup().addTo(map), villageLayer = L.layerGroup();
   var dl = document.getElementById("orte");
@@ -282,15 +397,20 @@ if ("serviceWorker" in navigator && (location.protocol === "https:" || location.
       '<tr><td>Geländeoberkante (0 m)</td><td>' + (b.h ? fmtN(b.h) + ' m NHN' : "keine Angabe") + '</td></tr>' +
       '<tr><td>Aufschlussart</td><td>' + esc(b.k || "unbekannt") + '</td></tr><tr><td>Entfernung</td><td>' + fmtM(it.d) + '</td></tr></table>';
     if (b.l) {
-      html += '<div class="legend"><span><span class="sw" style="background:#e53935"></span>rot = Grundwasserleiter (Sand, Kies)</span></div><table class="layers"><tr><td class="meta">Tiefe (m)</td><td class="meta">Gestein</td></tr>';
+      html += '<div class="legend"><span><span class="sw" style="background:#e53935"></span>rot = Grundwasserleiter (Sand, Kies)</span></div>' +
+        '<div class="gok">▼ 0 m = Geländeoberkante</div>' + PROFIL.drawColumn(b.l) +
+        '<div class="gok">▲ ' + (b.t ? fmtN(b.t) + ' m unter Gelände = Bohrungsende' : 'Bohrungsende') + '</div>' +
+        '<table class="layers"><tr><td class="meta">Tiefe (m)</td><td class="meta">Gestein</td></tr>';
       b.l.forEach(function (l) { html += '<tr class="' + (isAquifer(l[3]) ? "gwl" : "") + '"><td>' + fmtN(l[0]) + ' – ' + fmtN(l[1]) + '</td><td>' + esc(l[2]) + (isAquifer(l[3]) ? " (Grundwasserleiter)" : "") + '</td></tr>'; });
       html += '</table><p class="meta">Schichten vorab per Texterkennung aus dem Bild des Landes gelesen; einzelne Nachkommastellen können abweichen.</p>';
     } else html += '<p class="hint">Die Schichten dieser Bohrung ließen sich nicht sicher auslesen.</p>';
-    if (b.p) html += '<div class="gok">▼ 0 m = Geländeoberkante</div><div class="imgwrap"><img alt="Schichtenverzeichnis" src="img/' + esc(b.i) + '.png" onerror="this.parentNode.innerHTML=\'<p class=hint>Bild nicht im Paket enthalten.</p>\'"></div>';
+    if (b.p) html += '<div class="gok">Originalbild des Landes</div><div class="imgwrap"><img alt="Schichtenverzeichnis" src="img/' + esc(b.i) + '.png" onerror="this.parentNode.innerHTML=\'<p class=hint>Bild nicht im Paket enthalten.</p>\'"></div>';
+    else html += '<p class="meta">Originalbild des Landes (nur mit Internet): <a href="https://geo.brandenburg.de/karten/bpk24/x' + esc(b.i) + '.png" target="_blank" rel="noopener">öffnen</a></p>';
     detailEl.innerHTML = html;
     map.panTo([b.a, b.o], { animate: false });
   }
 
+  document.getElementById("toMap").addEventListener("click", function () { window.scrollTo(0, 0); });
   map.on("click", function (e) { search(e.latlng.lat, e.latlng.lng); });
   document.getElementById("radius").addEventListener("change", function () { if (marker) { var p = marker.getLatLng(); search(p.lat, p.lng); } });
   document.getElementById("searchForm").addEventListener("submit", function (e) {

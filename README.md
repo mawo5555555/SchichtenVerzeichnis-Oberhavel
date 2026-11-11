@@ -10,6 +10,7 @@ Auf dem Handy: Seite in Safari öffnen, *Teilen, Zum Home-Bildschirm*. Danach l�
 - Bohrungen, Schichtenverzeichnisse, Grundwasserleiter: © Landesamt für Bergbau, Geologie und Rohstoffe Brandenburg,
   Datenlizenz Deutschland, Namensnennung, Version 2.0 (https://www.govdata.de/dl-de/by-2-0)
 - Landkreisgrenze, Orte, Straßen, Gewässer: © OpenStreetMap-Mitwirkende (ODbL)
+- Geländehöhen (Relief, Höhenlinien): EU-DEM / Copernicus, über opentopodata.org
 - Kartenbibliothek: Leaflet (BSD-2-Clause)
 
 Die Schichten wurden per Texterkennung aus den Bildern des Landes gelesen und können Abweichungen enthalten.
