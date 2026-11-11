@@ -69,12 +69,12 @@
 if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(function () {});
 </script>
 <script src="lib/leaflet.js"></script>
-<script src="data/boundary.js?v=4"></script>
-<script src="data/basemap.js?v=4"></script>
-<script src="data/basemap_detail.js?v=4"></script>
-<script src="data/elevation.js?v=4"></script>
-<script src="data/aquifer.js?v=4"></script>
-<script src="data/boreholes.js?v=4"></script>
+<script src="data/boundary.js?v=5"></script>
+<script src="data/basemap.js?v=5"></script>
+<script src="data/basemap_detail.js?v=5"></script>
+<script src="data/elevation.js?v=5"></script>
+<script src="data/aquifer.js?v=5"></script>
+<script src="data/boreholes.js?v=5"></script>
 <script src="profil.js"></script>
 <script src="eigene.js"></script>
 <script>
@@ -220,16 +220,23 @@ if ("serviceWorker" in navigator && location.protocol === "https:") navigator.se
   }
   map.on("moveend zoomend resize", drawLabels); document.getElementById("optNames").addEventListener("change", drawLabels); drawLabels();
 
-  var townLayer = L.layerGroup().addTo(map), villageLayer = L.layerGroup();
-  var dl = document.getElementById("orte");
+  // Orte in Stufen, damit die Karte beim Hineinzoomen immer mehr zeigt: Städte, Dörfer, Ortsteile und Weiler, kleine Siedlungen und Einzelhöfe
+  var PLACE_TIER = { city: 0, town: 0, village: 1, suburb: 2, quarter: 2, hamlet: 2, neighbourhood: 3, locality: 3, isolated_dwelling: 3, farm: 3 };
+  var TIER_ZOOM = [0, 11.5, 12.5, 14];
+  var tierLayers = [L.layerGroup().addTo(map), L.layerGroup(), L.layerGroup(), L.layerGroup()];
+  var dl = document.getElementById("orte"), seenNames = {};
   BASE.orte.forEach(function (o) {
-    var layer = (o.t === "village") ? villageLayer : townLayer;
-    L.circleMarker([o.lat, o.lon], { radius: 2.5, color: "#26303b", weight: 1, fillColor: "#fff", fillOpacity: 1, interactive: false }).addTo(layer)
-      .bindTooltip(o.n, { permanent: true, direction: "right", offset: [4, 0], className: "place " + o.t });
-    var opt = document.createElement("option"); opt.value = o.n; dl.appendChild(opt);
+    var tier = PLACE_TIER[o.t] != null ? PLACE_TIER[o.t] : 3;
+    var cls = tier === 0 ? "town" : tier === 1 ? "village" : tier === 2 ? "village hamlet" : "village small";
+    L.circleMarker([o.lat, o.lon], { radius: tier >= 3 ? 1.8 : 2.5, color: "#26303b", weight: 1, fillColor: "#fff", fillOpacity: 1, interactive: false }).addTo(tierLayers[tier])
+      .bindTooltip(o.n, { permanent: true, direction: "right", offset: [4, 0], className: "place " + cls });
+    if (!seenNames[o.n]) { seenNames[o.n] = 1; var opt = document.createElement("option"); opt.value = o.n; dl.appendChild(opt); }
   });
   function villageVisibility() {
-    if (map.getZoom() >= 11.5) { if (!map.hasLayer(villageLayer)) villageLayer.addTo(map); } else if (map.hasLayer(villageLayer)) map.removeLayer(villageLayer);
+    var z = map.getZoom();
+    tierLayers.forEach(function (lg, i) {
+      if (z >= TIER_ZOOM[i]) { if (!map.hasLayer(lg)) lg.addTo(map); } else if (map.hasLayer(lg)) map.removeLayer(lg);
+    });
   }
   map.on("zoomend", villageVisibility); villageVisibility();
 
