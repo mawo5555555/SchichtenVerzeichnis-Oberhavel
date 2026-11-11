@@ -1,0 +1,76 @@
+  :root {
+    --bg: #f4f6f8; --panel: #ffffff; --text: #1d2530; --muted: #5b6776;
+    --line: #dde3ea; --accent: #1c6fb8; --accent-soft: #e6f0fa; --warn: #8a5a00; --warn-bg: #fff4dd;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12171d; --panel: #1b222b; --text: #e8edf2; --muted: #9aa7b6;
+      --line: #2c3743; --accent: #5aa7e8; --accent-soft: #1e2f40; --warn: #f0c36a; --warn-bg: #3a2f17;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); display: flex; flex-direction: column; }
+  header { padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; }
+  header h1 { font-size: 17px; margin: 0; font-weight: 650; }
+  .search { display: flex; gap: 6px; flex: 1 1 260px; max-width: 460px; }
+  input[type=text], select { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; }
+  input[type=text] { flex: 1; min-width: 0; }
+  button { font: inherit; border: 0; border-radius: 8px; padding: 7px 13px; background: var(--accent); color: #fff; cursor: pointer; }
+  button.ghost { background: var(--accent-soft); color: var(--accent); padding: 4px 10px; font-size: 13px; }
+  label { color: var(--muted); font-size: 14px; display: inline-flex; gap: 6px; align-items: center; }
+  main { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 420px; }
+  #map { height: 100%; min-height: 320px; }
+  aside { background: var(--panel); border-left: 1px solid var(--line); overflow: auto; padding: 14px 16px 24px; }
+  h2 { font-size: 15px; margin: 0 0 8px; }
+  .hint { color: var(--muted); font-size: 14px; }
+  .note { background: var(--warn-bg); color: var(--warn); border-radius: 8px; padding: 8px 10px; font-size: 13px; margin: 12px 0; }
+  #aquifer .box, #summary .box { border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 8px; padding: 10px 12px; margin: 0 0 14px; }
+  .tools { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+  ul.list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+  ul.list li { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; cursor: pointer; display: flex; gap: 10px; align-items: flex-start; }
+  ul.list li:hover, ul.list li.active { border-color: var(--accent); background: var(--accent-soft); }
+  ul.list li.off { opacity: .55; }
+  ul.list li .body { flex: 1; min-width: 0; }
+  .row { display: flex; justify-content: space-between; gap: 8px; }
+  .name { font-weight: 600; }
+  .meta { color: var(--muted); font-size: 13px; }
+  #detail { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
+  #detail img { width: 100%; height: auto; border: 1px solid var(--line); border-radius: 8px; background: #fff; margin-top: 8px; }
+  table.facts { border-collapse: collapse; width: 100%; font-size: 14px; }
+  table.facts td { padding: 3px 0; vertical-align: top; }
+  table.facts td:first-child { color: var(--muted); width: 45%; }
+  .gok { font-size: 13px; font-weight: 600; color: var(--accent); margin: 10px 0 2px; }
+  .imgwrap { position: relative; margin-top: 8px; line-height: 0; }
+  .imgwrap img { margin-top: 0 !important; display: block; }
+  .imgwrap .ov { position: absolute; left: 36.5%; width: 13.75%; background: rgba(229, 57, 53, .45); outline: 2px solid #e53935; outline-offset: -1px; pointer-events: none; }
+  table.layers { border-collapse: collapse; width: 100%; font-size: 13px; margin-top: 8px; }
+  table.layers td { padding: 3px 4px; border-top: 1px solid var(--line); }
+  table.layers tr.gwl td { color: #d32f2f; font-weight: 600; }
+  @media (prefers-color-scheme: dark) { table.layers tr.gwl td { color: #ff8a80; } }
+  .sw { display: inline-block; width: 11px; height: 11px; border-radius: 2px; vertical-align: -1px; margin-right: 5px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--muted); margin: 8px 0; }
+  .avgrow { display: grid; grid-template-columns: 34px 1fr 74px; gap: 6px; align-items: center; font-size: 11px; height: 12px; color: var(--muted); }
+  .avgbar { display: flex; height: 10px; border-radius: 2px; overflow: hidden; background: var(--line); }
+  .avgbar > span { display: block; height: 100%; }
+  .avgrow .pct { text-align: right; }
+  .avgrow .pct.red { color: #d32f2f; font-weight: 600; }
+  .progress { font-size: 13px; color: var(--muted); }
+  .synth { position: relative; display: block; margin: 10px 0 6px; }
+  .synth .col { position: absolute; left: 44px; width: 78px; border: 1px solid #222; box-sizing: border-box; }
+  .synth .seg { position: absolute; left: 0; right: 0; border-bottom: 1px solid #222; box-sizing: border-box; }
+  .synth .seg.aq { box-shadow: inset 0 0 0 2px #b71c1c; }
+  .synth .seg.thin { opacity: .55; border-bottom-style: dashed; }
+  .synth .tick { position: absolute; left: 0; width: 40px; text-align: right; font-size: 11px; color: var(--muted); line-height: 12px; margin-top: -6px; }
+  .synth .tickline { position: absolute; left: 40px; width: 5px; border-top: 1px solid var(--muted); }
+  .synth .lab { position: absolute; left: 134px; right: 0; font-size: 12px; line-height: 14px; margin-top: -7px; }
+  .synth .lab.aq { color: #d32f2f; font-weight: 600; }
+  @media (prefers-color-scheme: dark) { .synth .lab.aq { color: #ff8a80; } .synth .col, .synth .seg { border-color: #cfd6de; } }
+  .verdict { border: 1px solid var(--line); border-left: 4px solid #e53935; border-radius: 8px; padding: 10px 12px; margin: 12px 0; font-size: 14px; }
+  details.more { margin: 10px 0 14px; }
+  details.more summary { cursor: pointer; color: var(--accent); font-size: 14px; }
+  .bar { height: 8px; border-radius: 4px; background: var(--accent-soft); margin-top: 2px; overflow: hidden; }
+  .bar > span { display: block; height: 100%; background: var(--accent); }
+  footer { padding: 6px 16px; font-size: 12px; color: var(--muted); background: var(--panel); border-top: 1px solid var(--line); }
+  footer a { color: var(--accent); }
+  @media (max-width: 800px) { main { grid-template-columns: 1fr; grid-template-rows: 55vh 1fr; } aside { border-left: 0; border-top: 1px solid var(--line); } }

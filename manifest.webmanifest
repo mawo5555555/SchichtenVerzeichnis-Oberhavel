@@ -1,0 +1,15 @@
+{
+  "name": "Schichtenverzeichnis Oberhavel",
+  "short_name": "Schichten",
+  "description": "Geschätztes Schichtenverzeichnis und Grundwasserleiter für den Landkreis Oberhavel, offline nutzbar.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#12171d",
+  "theme_color": "#183a5a",
+  "lang": "de",
+  "icons": [
+    { "src": "icon-180.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

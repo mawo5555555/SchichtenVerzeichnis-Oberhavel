@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Schichtenverzeichnis Oberhavel</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Schichten">
+<meta name="theme-color" content="#183a5a">
+<link rel="stylesheet" href="lib/leaflet.css">
+<link rel="stylesheet" href="style.css">
+<style>
+  #map { background: #e9efe6; }
+  .leaflet-container { font: inherit; }
+  .place { background: transparent; border: 0; box-shadow: none; color: #26303b; font-size: 12px; font-weight: 600; text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 3px #fff; padding: 0; }
+  .place.village { font-weight: 500; font-size: 11px; }
+  .offline-note { background: var(--accent-soft); color: var(--accent); border-radius: 8px; padding: 8px 10px; font-size: 13px; margin: 12px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Schichtenverzeichnis Oberhavel</h1>
+  <form class="search" id="searchForm">
+    <input type="text" id="q" list="orte" placeholder="Ort im Landkreis suchen, z. B. Oranienburg" aria-label="Ort im Landkreis suchen">
+    <datalist id="orte"></datalist>
+    <button type="submit">Suchen</button>
+  </form>
+  <label>Umkreis
+    <select id="radius">
+      <option value="250">250 m</option>
+      <option value="500">500 m</option>
+      <option value="1000" selected>1 km</option>
+      <option value="2500">2,5 km</option>
+      <option value="5000">5 km</option>
+    </select>
+  </label>
+  <label><input type="checkbox" id="optPoints" checked> Bohrpunkte</label>
+</header>
+<main>
+  <div id="map" role="application" aria-label="Karte des Landkreises Oberhavel"></div>
+  <aside id="side">
+    <h2>Standort auswählen</h2>
+    <p class="hint">Tippe oder klicke in die Karte oder suche einen Ort. Die App berechnet sofort aus den Bohrungen im Umkreis ein geschätztes Schichtenverzeichnis mit Vermutung zu den Grundwasserleitern. Alles läuft ohne Internet.</p>
+    <div class="offline-note" id="stand"></div>
+    <div id="aquifer"></div>
+    <div id="avgBox"></div>
+    <div id="summary"></div>
+    <div id="results"></div>
+    <div id="detail" hidden></div>
+  </aside>
+</main>
+<footer>
+  Daten: © <a href="https://lbgr.brandenburg.de" target="_blank" rel="noopener">Landesamt für Bergbau, Geologie und Rohstoffe Brandenburg</a>,
+  Datenlizenz Deutschland – Namensnennung – Version 2.0. Karte: © OpenStreetMap-Mitwirkende (ODbL). Prototyp, ohne Gewähr.
+</footer>
+
+<script>
+// Offline-Betrieb auf dem Handy: Dateien beim ersten Aufruf über https im Gerät speichern (nicht nötig bei Doppelklick am Mac)
+if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) navigator.serviceWorker.register("sw.js").catch(function () {});
+</script>
+<script src="lib/leaflet.js"></script>
+<script src="data/boundary.js"></script>
+<script src="data/basemap.js"></script>
+<script src="data/basemap_detail.js"></script>
+<script src="data/aquifer.js"></script>
+<script src="data/boreholes.js"></script>
+<script src="profil.js"></script>
+<script>
+(function () {
+  var esc = PROFIL.esc, fmtN = PROFIL.fmtN, isAquifer = PROFIL.isAquifer;
+  var B = window.BOHRUNGEN, BASE = window.BASEMAP, GRID = window.AQUIFER_GRID, KREIS = window.KREIS_GRENZE;
+  var MAX_LIST = 50;
+
+  document.getElementById("stand").textContent = "Offline-Datenstand: " + (window.DATENSTAND || "unbekannt") + " · " + B.length + " Bohrungen mit Schichtenverzeichnis, davon " +
+    B.filter(function (b) { return b.l; }).length + " mit gelesenen Schichten.";
+
+  /* ---------- Karte (nur Vektordaten, keine Kacheln) ---------- */
+  var map = L.map("map", { preferCanvas: true, minZoom: 9, maxZoom: 18, zoomSnap: 0.5, zoomControl: true });
+  map.attributionControl.setPrefix(false);
+  map.attributionControl.addAttribution("© OpenStreetMap-Mitwirkende · © LBGR Brandenburg");
+  var ring = KREIS[0].map(function (p) { return [p[1], p[0]]; });
+  var kreisLayer = L.polygon(ring, { color: "#3b4a5a", weight: 2, fill: false, interactive: false }).addTo(map);
+  map.fitBounds(kreisLayer.getBounds());
+
+  var cv = L.canvas({ padding: 0.3 });
+  BASE.seen.forEach(function (s) { L.polygon(s.p, { renderer: cv, color: "#8fb6d9", weight: 1, fillColor: "#cfe3f3", fillOpacity: 1, interactive: false }).addTo(map); });
+  BASE.fluesse.forEach(function (f) { L.polyline(f.p, { renderer: cv, color: "#8fb6d9", weight: 1.5, interactive: false }).addTo(map); });
+  var ROAD = { motorway: ["#d9822b", 3], trunk: ["#e0a243", 2.5], primary: ["#e8b85c", 2], secondary: ["#bdbdbd", 1.5] };
+  BASE.strassen.forEach(function (s) { var st = ROAD[s.k] || ["#ccc", 1]; L.polyline(s.p, { renderer: cv, color: st[0], weight: st[1], interactive: false }).addTo(map); });
+
+  // Detailebene (Nebenstraßen, Wohnstraßen, Bahn): erst ab Zoomstufe 13 gezeichnet, damit die Karte bei Übersicht flüssig bleibt
+  var detailLayer = L.layerGroup();
+  var DET = { tertiary: ["#b9a36a", 2], unclassified: ["#9a9a9a", 1.4], residential: ["#a3a3a3", 1.3], living_street: ["#b5b5b5", 1.1], primary: ["#e8b85c", 2], secondary: ["#bdbdbd", 1.5] };
+  var detailCv = L.canvas({ padding: 0.2 });
+  (window.BASEMAP_DETAIL.strassen || []).forEach(function (s) { var st = DET[s.k] || ["#ccc", 1]; L.polyline(s.p, { renderer: detailCv, color: st[0], weight: st[1], interactive: false }).addTo(detailLayer); });
+  (window.BASEMAP_DETAIL.bahn || []).forEach(function (p) { L.polyline(p, { renderer: detailCv, color: "#7b7b7b", weight: 1.2, dashArray: "5 4", interactive: false }).addTo(detailLayer); });
+  function detailVisibility() { if (map.getZoom() >= 13) { if (!map.hasLayer(detailLayer)) detailLayer.addTo(map); } else if (map.hasLayer(detailLayer)) map.removeLayer(detailLayer); }
+  map.on("zoomend", detailVisibility); detailVisibility();
+
+  var townLayer = L.layerGroup().addTo(map), villageLayer = L.layerGroup();
+  var dl = document.getElementById("orte");
+  BASE.orte.forEach(function (o) {
+    var layer = (o.t === "village") ? villageLayer : townLayer;
+    L.circleMarker([o.lat, o.lon], { radius: 2.5, color: "#26303b", weight: 1, fillColor: "#fff", fillOpacity: 1, interactive: false }).addTo(layer)
+      .bindTooltip(o.n, { permanent: true, direction: "right", offset: [4, 0], className: "place " + o.t });
+    var opt = document.createElement("option"); opt.value = o.n; dl.appendChild(opt);
+  });
+  function villageVisibility() {
+    if (map.getZoom() >= 11.5) { if (!map.hasLayer(villageLayer)) villageLayer.addTo(map); } else if (map.hasLayer(villageLayer)) map.removeLayer(villageLayer);
+  }
+  map.on("zoomend", villageVisibility); villageVisibility();
+
+  var pointsLayer = L.layerGroup();
+  B.forEach(function (b) {
+    L.circleMarker([b.a, b.o], { renderer: cv, radius: 2.5, weight: 0, fillColor: b.l ? "#2e7d32" : "#8a94a0", fillOpacity: 0.8, interactive: false }).addTo(pointsLayer);
+  });
+  function pointsVisibility() {
+    var want = document.getElementById("optPoints").checked && map.getZoom() >= 11;
+    if (want) { if (!map.hasLayer(pointsLayer)) pointsLayer.addTo(map); } else if (map.hasLayer(pointsLayer)) map.removeLayer(pointsLayer);
+  }
+  map.on("zoomend", pointsVisibility); document.getElementById("optPoints").addEventListener("change", pointsVisibility); pointsVisibility();
+
+  /* ---------- Hilfsfunktionen ---------- */
+  function dist(lat1, lon1, lat2, lon2) {
+    var R = 6371000, rad = Math.PI / 180, dLat = (lat2 - lat1) * rad, dLon = (lon2 - lon1) * rad;
+    var a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    return 2 * R * Math.asin(Math.sqrt(a));
+  }
+  function fmtM(m) { return m < 1000 ? Math.round(m) + " m" : (m / 1000).toFixed(1).replace(".", ",") + " km"; }
+  function inKreis(lat, lon) {
+    var c = false, j = ring.length - 1;
+    ring.forEach(function (p, i) {
+      var q = ring[j];
+      if (((p[0] > lat) !== (q[0] > lat)) && (lon < (q[1] - p[1]) * (lat - p[0]) / (q[0] - p[0]) + p[1])) c = !c;
+      j = i;
+    });
+    return c;
+  }
+
+  /* ---------- Grundwasserleiter aus dem Raster ---------- */
+  var VULN = { high: "hoch", medium: "mittel", low: "gering", veryHigh: "sehr hoch", veryLow: "sehr gering" };
+  var MEDIA = { porous: "Porengrundwasserleiter", fracture: "Kluftgrundwasserleiter", karst: "Karstgrundwasserleiter" };
+  function lookupAquifer(lat, lon) {
+    var r0 = Math.round((lat - GRID.origin_lat) / GRID.step_lat), c0 = Math.round((lon - GRID.origin_lon) / GRID.step_lon);
+    var best = null, bd = 1e12;
+    for (var dr = -2; dr <= 2; dr++) for (var dc = -2; dc <= 2; dc++) {
+      var r = r0 + dr, c = c0 + dc;
+      if (r < 0 || c < 0 || r >= GRID.rows || c >= GRID.cols) continue;
+      var k = GRID.cells[r * GRID.cols + c];
+      if (k < 0) continue;
+      var d = dist(lat, lon, GRID.origin_lat + r * GRID.step_lat, GRID.origin_lon + c * GRID.step_lon);
+      if (d < bd) { bd = d; best = { cls: GRID.classes[k], d: d }; }
+    }
+    return best;
+  }
+  function renderAquifer(lat, lon) {
+    var el = document.getElementById("aquifer"), a = lookupAquifer(lat, lon);
+    if (!a || a.d > 1500) { el.innerHTML = '<h2>Grundwasserleiter (Übersichtskarte)</h2><p class="hint">Für diesen Punkt liegt in der Übersichtskarte keine Angabe vor.</p>'; return; }
+    var c = a.cls, thick = (c.maechtigkeit || "").split(/\s+/).join(" bis ");
+    el.innerHTML = '<h2>Grundwasserleiter an diesem Punkt</h2><div class="box"><table class="facts">' +
+      '<tr><td>Bezeichnung</td><td>' + esc(c.bezeichnung || "unbekannt") + '</td></tr>' +
+      (thick ? '<tr><td>Mächtigkeit</td><td>' + esc(thick) + ' ' + esc(c.einheit || "") + '</td></tr>' : '') +
+      '<tr><td>Gestein</td><td>' + esc(c.gestein || "unbekannt") + '</td></tr>' +
+      '<tr><td>Art</td><td>' + esc(MEDIA[c.art] || c.art || "unbekannt") + '</td></tr>' +
+      (c.empfindlichkeit ? '<tr><td>Empfindlichkeit gegenüber Verunreinigung</td><td>' + esc(VULN[c.empfindlichkeit] || c.empfindlichkeit) + '</td></tr>' : '') +
+      '</table></div><p class="meta">Übersichtskarte 1 : 300 000, abgetastet auf einem 500-m-Raster (nächster Rasterpunkt, ' + fmtM(a.d) + ' entfernt). Für einzelne Grundstücke nur grob.</p>';
+  }
+
+  /* ---------- Suche im Umkreis ---------- */
+  var marker = null, circle = null, boreMarkers = L.layerGroup().addTo(map);
+  var resultsEl = document.getElementById("results"), summaryEl = document.getElementById("summary"), detailEl = document.getElementById("detail"), avgEl = document.getElementById("avgBox");
+  var current = [], activeIdx = -1;
+
+  function search(lat, lon) {
+    var r = parseInt(document.getElementById("radius").value, 10);
+    if (marker) map.removeLayer(marker);
+    if (circle) map.removeLayer(circle);
+    boreMarkers.clearLayers();
+    marker = L.marker([lat, lon]).addTo(map);
+    circle = L.circle([lat, lon], { radius: r, color: "#1c6fb8", weight: 1, fillOpacity: 0.05, interactive: false }).addTo(map);
+    map.fitBounds(circle.getBounds(), { maxZoom: 15, animate: false });
+    detailEl.hidden = true;
+    renderAquifer(lat, lon);
+    var list = [];
+    B.forEach(function (b) {
+      var d = dist(lat, lon, b.a, b.o);
+      if (d <= r) list.push({ b: b, d: d, on: true });
+    });
+    list.sort(function (x, y) { return x.d - y.d; });
+    current = list.slice(0, MAX_LIST);
+    current.total = list.length;
+    current.all = list;
+    renderList(r);
+  }
+
+  function renderList(r) {
+    activeIdx = -1;
+    boreMarkers.clearLayers();
+    var list = current;
+    if (!list.length) {
+      summaryEl.innerHTML = ""; resultsEl.innerHTML = '<h2>Keine Bohrung im Umkreis</h2><p class="hint">Im Umkreis von ' + fmtM(r) + ' liegt keine Bohrung mit Schichtenverzeichnis. Wähle einen größeren Umkreis.</p>';
+      avgEl.innerHTML = "";
+      return;
+    }
+    var html = '<h2>' + list.total + ' Bohrung' + (list.total > 1 ? 'en' : '') + ' im Umkreis von ' + fmtM(r) + '</h2>' +
+      '<p class="hint">Nach Entfernung sortiert' + (list.total > list.length ? ', die nächsten ' + list.length + ' sind aufgeführt' : '') +
+      '. Grün = Schichten gelesen. Mit den Häkchen wählst du aus, was in die Schätzung eingeht.</p>' +
+      '<div class="tools"><button type="button" class="ghost" data-act="all">Alle</button><button type="button" class="ghost" data-act="none">Keine</button>' +
+      '<button type="button" class="ghost" data-act="near10">Nächste 10</button></div><ul class="list">';
+    list.forEach(function (it, i) {
+      var b = it.b;
+      html += '<li data-i="' + i + '"><input type="checkbox" class="chk" aria-label="Bohrung ' + esc(b.n) + ' auswählen" checked>' +
+        '<div class="body"><div class="row"><span class="name">' + esc(b.n || "ohne Namen") + '</span><span class="meta">' + fmtM(it.d) + '</span></div>' +
+        '<div class="meta">Tiefe ' + (b.t ? fmtN(b.t) : "?") + ' m · ' + (b.l ? "Schichten gelesen" : "Schichten nicht lesbar") + '</div></div></li>';
+      it.mk = L.circleMarker([b.a, b.o], { radius: 6, color: b.l ? "#b8321c" : "#8a94a0", weight: 2, fillOpacity: 0.7 }).addTo(boreMarkers).on("click", function () { select(i); });
+    });
+    resultsEl.innerHTML = html + '</ul>';
+    resultsEl.querySelectorAll("li").forEach(function (li) {
+      var i = parseInt(li.dataset.i, 10);
+      li.addEventListener("click", function (e) { if (!e.target.classList.contains("chk")) select(i); });
+      li.querySelector(".chk").addEventListener("change", function (e) { current[i].on = e.target.checked; sync(false); });
+    });
+    resultsEl.querySelectorAll("button[data-act]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var act = btn.dataset.act;
+        current.forEach(function (it, i) { it.on = act === "all" ? true : act === "none" ? false : i < 10; });
+        sync(true);
+      });
+    });
+    sync(false);
+    select(0);
+  }
+
+  function sync(updateBoxes) {
+    resultsEl.querySelectorAll("li").forEach(function (li) {
+      var it = current[parseInt(li.dataset.i, 10)];
+      li.classList.toggle("off", !it.on);
+      if (updateBoxes) li.querySelector(".chk").checked = it.on;
+    });
+    current.forEach(function (it) { it.mk.setStyle({ fillOpacity: it.on ? 0.7 : 0.15, opacity: it.on ? 1 : 0.4 }); });
+    summarize(); estimate();
+  }
+
+  function median(a) { var s = a.slice().sort(function (x, y) { return x - y; }), m = Math.floor(s.length / 2); return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; }
+  function summarize() {
+    var sel = current.filter(function (it) { return it.on; });
+    if (!sel.length) { summaryEl.innerHTML = '<h2>Zusammenfassung</h2><p class="hint">Keine Bohrung ausgewählt.</p>'; return; }
+    var depths = sel.map(function (it) { return it.b.t; }).filter(function (x) { return x > 0; });
+    var heights = sel.map(function (it) { return it.b.h; }).filter(function (x) { return x !== 0 && !isNaN(x); });
+    var html = '<h2>Zusammenfassung von ' + sel.length + ' Bohrung' + (sel.length > 1 ? 'en' : '') + '</h2><div class="box"><table class="facts">';
+    if (depths.length) {
+      var avg = depths.reduce(function (a, b) { return a + b; }, 0) / depths.length;
+      html += '<tr><td>Endteufe</td><td>Mittel ' + fmtN(avg) + ' m, Median ' + fmtN(median(depths)) + ' m</td></tr>' +
+              '<tr><td>Spanne der Endteufe</td><td>' + fmtN(Math.min.apply(null, depths)) + ' bis ' + fmtN(Math.max.apply(null, depths)) + ' m</td></tr>';
+    }
+    if (heights.length) html += '<tr><td>Geländehöhe</td><td>Mittel ' + fmtN(heights.reduce(function (a, b) { return a + b; }, 0) / heights.length) + ' m NHN</td></tr>';
+    summaryEl.innerHTML = html + '</table></div>';
+  }
+
+  // Geschätztes Schichtenverzeichnis aus den ausgewählten Bohrungen mit gelesenen Schichten
+  function estimate() {
+    var sel = current.filter(function (it) { return it.on; });
+    var withL = sel.filter(function (it) { return it.b.l; });
+    var items = withL.map(function (it) {
+      var layers = it.b.l.map(function (l) { return { from: l[0], to: l[1], text: l[2], cat: l[3] }; });
+      return { prof: { layers: layers, depthRead: layers[layers.length - 1].to }, d: it.d };
+    });
+    PROFIL.renderExpected(avgEl, items, sel.length, sel.length - withL.length);
+  }
+
+  function select(i) {
+    var it = current[i], b = it && it.b;
+    if (!b) return;
+    activeIdx = i;
+    resultsEl.querySelectorAll("li").forEach(function (li) { li.classList.toggle("active", li.dataset.i === String(i)); });
+    detailEl.hidden = false;
+    var html = '<h2>' + esc(b.n || "ohne Namen") + '</h2><table class="facts">' +
+      '<tr><td>Bohrungs-ID</td><td>' + esc(b.i) + '</td></tr><tr><td>Endteufe</td><td>' + (b.t ? fmtN(b.t) + ' m' : "unbekannt") + '</td></tr>' +
+      '<tr><td>Geländeoberkante (0 m)</td><td>' + (b.h ? fmtN(b.h) + ' m NHN' : "keine Angabe") + '</td></tr>' +
+      '<tr><td>Aufschlussart</td><td>' + esc(b.k || "unbekannt") + '</td></tr><tr><td>Entfernung</td><td>' + fmtM(it.d) + '</td></tr></table>';
+    if (b.l) {
+      html += '<div class="legend"><span><span class="sw" style="background:#e53935"></span>rot = Grundwasserleiter (Sand, Kies)</span></div><table class="layers"><tr><td class="meta">Tiefe (m)</td><td class="meta">Gestein</td></tr>';
+      b.l.forEach(function (l) { html += '<tr class="' + (isAquifer(l[3]) ? "gwl" : "") + '"><td>' + fmtN(l[0]) + ' – ' + fmtN(l[1]) + '</td><td>' + esc(l[2]) + (isAquifer(l[3]) ? " (Grundwasserleiter)" : "") + '</td></tr>'; });
+      html += '</table><p class="meta">Schichten vorab per Texterkennung aus dem Bild des Landes gelesen; einzelne Nachkommastellen können abweichen.</p>';
+    } else html += '<p class="hint">Die Schichten dieser Bohrung ließen sich nicht sicher auslesen.</p>';
+    if (b.p) html += '<div class="gok">▼ 0 m = Geländeoberkante</div><div class="imgwrap"><img alt="Schichtenverzeichnis" src="img/' + esc(b.i) + '.png" onerror="this.parentNode.innerHTML=\'<p class=hint>Bild nicht im Paket enthalten.</p>\'"></div>';
+    detailEl.innerHTML = html;
+    map.panTo([b.a, b.o], { animate: false });
+  }
+
+  map.on("click", function (e) { search(e.latlng.lat, e.latlng.lng); });
+  document.getElementById("radius").addEventListener("change", function () { if (marker) { var p = marker.getLatLng(); search(p.lat, p.lng); } });
+  document.getElementById("searchForm").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var q = document.getElementById("q").value.trim().toLowerCase();
+    if (!q) return;
+    var hit = BASE.orte.filter(function (o) { return o.n.toLowerCase() === q; })[0] || BASE.orte.filter(function (o) { return o.n.toLowerCase().indexOf(q) === 0; })[0];
+    if (!hit) { resultsEl.innerHTML = '<p class="hint">Ort nicht gefunden. Offline sind nur die Orte des Landkreises durchsuchbar, sonst direkt in die Karte tippen.</p>'; return; }
+    search(hit.lat, hit.lon);
+  });
+})();
+</script>
+</body>
+</html>
