@@ -4,7 +4,7 @@
  * damit alle Geräte dieselben Bohrungen haben. Je Bohrung gilt die neuere Änderung, Löschungen werden als Vermerk weitergegeben.
  * Regelmäßig mit "Alle sichern" in eine Datei sichern, weil iOS Web-Daten löschen kann. */
 (function (global) {
-  var KEY = "schichten.eigene.v1", TKEY = "schichten.eigene.geloescht.v1", SKEY = "schichten.sync.v1", SYNCFILE = "eigene-bohrungen.json";
+  var KEY = "schichten.eigene.v1", TKEY = "schichten.eigene.geloescht.v1", SKEY = "schichten.sync.v1", SYNCFILE = "eigene-bohrungen.json", SHAREFILE = "geteilte-bohrungen.json";
   var ARTEN = [
     { g: "Häufig", items: [["Oberboden", "Auffüllung / Boden", "OB – Oberboden"], ["Feinsand", "Feinsand", "FS – Feinsand"], ["Mittelsand", "Mittelsand", "MS – Mittelsand"], ["Grobsand", "Grobsand", "GS – Grobsand"], ["Lehm", "Geschiebemergel / Lehm", "Lehm"], ["Geschiebemergel", "Geschiebemergel / Lehm", "Geschiebemergel"]] },
     { g: "Weitere Sande und Kiese", items: [["Sand", "Sand (o. n. A.)", "Sand (ohne nähere Angabe)"], ["Feinkies", "Kies", "Feinkies"], ["Mittelkies", "Kies", "Mittelkies"], ["Grobkies", "Kies", "Grobkies"], ["Kies", "Kies", "Kies"]] },
@@ -18,7 +18,7 @@
   var GWLTXT = { beginn: "GWL Beginn", ende: "GWL Ende", beides: "GWL Beginn und Ende" };
   var BEIMENGUNG = ["", "schluffig", "tonig", "sandig", "kiesig", "humos", "steinig"];
 
-  var map, panel, markers, esc, fmtN, onChange = function () {}, draft = null, picking = false, all = [], tomb = {}, syncTimer = null, syncBusy = false, syncAgain = false, syncMsg = "";
+  var map, panel, markers, esc, fmtN, onChange = function () {}, draft = null, picking = false, all = [], shared = [], tomb = {}, syncTimer = null, syncBusy = false, syncAgain = false, syncMsg = "";
 
   function load() {
     try { all = JSON.parse(localStorage.getItem(KEY) || "[]"); } catch (e) { all = []; }
@@ -57,7 +57,17 @@
   function asBohrungen() {
     return all.filter(function (b) { return b.layers.length && b.layers.every(function (l) { return l.art; }); }).map(function (b) {
       return { i: "eigen-" + b.id, n: b.name + " (eigene)", a: b.lat, o: b.lon, t: depthOf(b), h: b.hoehe || 0, k: "eigen", l: layersOf(b), p: 0, eigen: 1, eid: b.id };
-    });
+    }).concat(sharedOthers().filter(function (b) { return b.layers.length && b.layers.every(function (l) { return l.art; }); }).map(function (b) {
+      return { i: "geteilt-" + b.id, n: b.name + " (geteilt)", a: b.lat, o: b.lon, t: depthOf(b), h: b.hoehe || 0, k: "eigen", l: layersOf(b), p: 0, eigen: 1, geteilt: 1, eid: b.id };
+    }));
+  }
+  // Geteilte Bohrungen, die nicht ohnehin zu den eigenen dieses Geräts gehören
+  function sharedOthers() { return shared.filter(function (b) { return !all.some(function (x) { return x.id === b.id; }); }); }
+  function loadShared() {
+    return fetch(SHAREFILE + "?t=" + Date.now(), { cache: "no-store" }).then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+      var arr = d && d.bohrungen ? d.bohrungen.filter(function (b) { return b && b.id && b.layers && b.lat != null && b.lon != null; }) : [];
+      if (JSON.stringify(arr) !== JSON.stringify(shared)) { shared = arr; drawMarkers(); onChange(); }
+    }).catch(function () {});
   }
 
   /* ---------- Karte ---------- */
@@ -66,6 +76,10 @@
     all.forEach(function (b) {
       var icon = L.divIcon({ className: "own-marker", html: "<span></span>", iconSize: [18, 18], iconAnchor: [9, 9] });
       L.marker([b.lat, b.lon], { icon: icon, title: b.name }).addTo(markers).on("click", function () { show(b.id); });
+    });
+    sharedOthers().forEach(function (b) {
+      var icon = L.divIcon({ className: "own-marker shared-marker", html: "<span></span>", iconSize: [18, 18], iconAnchor: [9, 9] });
+      L.marker([b.lat, b.lon], { icon: icon, title: b.name + " (geteilt)" }).addTo(markers).on("click", function () { show(b.id); });
     });
   }
 
@@ -103,7 +117,7 @@
 
   /* ---------- Eingabemaske ---------- */
   function newDraft() {
-    return { id: null, name: "", datum: today(), lat: null, lon: null, hoehe: "", layers: [{ von: 0, bis: 1, art: "", bei: "", bem: "", gwl: "" }] };
+    return { id: null, name: "", datum: today(), lat: null, lon: null, hoehe: "", teilen: true, layers: [{ von: 0, bis: 1, art: "", bei: "", bem: "", gwl: "" }] };
   }
   function open(d) {
     draft = d || newDraft(); picking = false; renderForm(); scrollToPanel();
@@ -116,6 +130,7 @@
       '<div class="own-grid"><label>Name<input type="text" id="oName" value="' + esc(draft.name) + '" placeholder="z. B. B1 Grundstück Müller"></label>' +
       '<label>Datum<input type="date" id="oDatum" value="' + esc(draft.datum) + '"></label>' +
       '<label>Geländehöhe in m NHN (optional)<input type="number" id="oHoehe" step="0.1" value="' + esc(String(draft.hoehe)) + '"></label></div>' +
+      '<label class="own-share"><input type="checkbox" id="oTeilen"' + (draft.teilen !== false ? " checked" : "") + '> Öffentlich teilen (für alle sichtbar, die den Link öffnen; wirkt nur bei verbundenem GitHub-Abgleich)</label>' +
       '<p class="own-pos" id="oPos"></p><div class="tools"><button type="button" class="ghost" id="oGps">Standort per GPS</button>' +
       '<button type="button" class="ghost" id="oPick">Punkt in Karte setzen</button><button type="button" class="ghost" id="oCenter">Kartenmitte nehmen</button></div>' +
       '<h2>Schichten ab Geländeoberkante</h2><p class="hint">Jede Zeile ist standardmäßig 1 m. Bei „bis“ kannst du jede Tiefe eintragen, die letzte Zeile gibt die Endteufe.</p><div id="oRows"></div>' +
@@ -127,6 +142,7 @@
     panel.querySelector("#oName").addEventListener("input", function (e) { draft.name = e.target.value; });
     panel.querySelector("#oDatum").addEventListener("input", function (e) { draft.datum = e.target.value; });
     panel.querySelector("#oHoehe").addEventListener("input", function (e) { draft.hoehe = e.target.value; });
+    panel.querySelector("#oTeilen").addEventListener("change", function (e) { draft.teilen = e.target.checked; });
     panel.querySelector("#oGps").addEventListener("click", gps);
     panel.querySelector("#oPick").addEventListener("click", function () { picking = true; updatePos("Tippe jetzt in die Karte, um den Bohrpunkt zu setzen."); map.getContainer().scrollIntoView({ block: "start" }); });
     panel.querySelector("#oCenter").addEventListener("click", function () { var c = map.getCenter(); setPos(c.lat, c.lng); });
@@ -189,7 +205,7 @@
     var n = all.length + 1;
     var rec = { id: draft.id || uid(), name: (draft.name || "").trim() || "Eigene Bohrung " + n, datum: draft.datum || today(), lat: draft.lat, lon: draft.lon,
                 hoehe: draft.hoehe === "" ? null : parseFloat(String(draft.hoehe).replace(",", ".")),
-                layers: draft.layers.map(function (l) { return { von: l.von, bis: l.bis, art: l.art, bei: l.bei, bem: l.bem || "", gwl: l.gwl || "" }; }), erstellt: Date.now(), geaendert: Date.now() };
+                layers: draft.layers.map(function (l) { return { von: l.von, bis: l.bis, art: l.art, bei: l.bei, bem: l.bem || "", gwl: l.gwl || "" }; }), erstellt: Date.now(), geaendert: Date.now(), teilen: draft.teilen !== false };
     var idx = all.findIndex(function (b) { return b.id === rec.id; });
     if (idx >= 0 && all[idx].erstellt) rec.erstellt = all[idx].erstellt;
     delete tomb[rec.id];
@@ -200,7 +216,8 @@
 
   /* ---------- Ansicht, Liste, Export ---------- */
   function show(id) {
-    var b = all.find(function (x) { return x.id === id; });
+    var b = all.find(function (x) { return x.id === id; }), ro = false;
+    if (!b) { b = shared.find(function (x) { return x.id === id; }); ro = true; }
     if (!b) return;
     var lay = layersOf(b), gwlIvs = gwlList(b.layers);
     var h = '<h2>' + esc(b.name) + '</h2><table class="facts"><tr><td>Datum</td><td>' + esc(b.datum) + '</td></tr><tr><td>Standort</td><td>' + b.lat.toFixed(5) + " N, " + b.lon.toFixed(5) + ' O</td></tr>' +
@@ -212,15 +229,15 @@
       var aq = gwlIvs.some(function (p) { return (l.von + l.bis) / 2 >= p[0] && (l.von + l.bis) / 2 <= p[1]; });
       h += '<tr class="' + (aq ? "gwl" : "") + '"><td>' + fmtN(l.von) + " – " + fmtN(l.bis) + '</td><td>' + esc(textOf(l)) + (aq ? " (Grundwasserleiter)" : "") + (l.gwl ? " · " + GWLTXT[l.gwl] : "") + '</td><td>' + esc(l.bem || "") + '</td></tr>';
     });
-    h += '</table><div class="tools"><button type="button" class="ghost" id="oEdit">Bearbeiten</button><button type="button" class="ghost" id="oCsv">Als CSV</button>' +
-      '<button type="button" class="ghost" id="oMap">In der Karte zeigen</button><button type="button" class="ghost" id="oRemove">Löschen</button><button type="button" class="ghost" id="oList">Meine Bohrungen</button></div>';
+    h += '</table>' + (ro ? '<p class="hint">Geteilte Bohrung, nur lesbar.</p>' : "") + '<div class="tools">' + (ro ? "" : '<button type="button" class="ghost" id="oEdit">Bearbeiten</button>') + '<button type="button" class="ghost" id="oCsv">Als CSV</button>' +
+      '<button type="button" class="ghost" id="oMap">In der Karte zeigen</button>' + (ro ? "" : '<button type="button" class="ghost" id="oRemove">Löschen</button>') + '<button type="button" class="ghost" id="oList">Meine Bohrungen</button></div>';
     panel.innerHTML = h; scrollToPanel();
-    panel.querySelector("#oEdit").addEventListener("click", function () {
-      open({ id: b.id, name: b.name, datum: b.datum, lat: b.lat, lon: b.lon, hoehe: b.hoehe == null ? "" : b.hoehe, layers: b.layers.map(function (l) { return { von: l.von, bis: l.bis, art: l.art, bei: l.bei || "", bem: l.bem || "", gwl: l.gwl || "" }; }) });
+    if (!ro) panel.querySelector("#oEdit").addEventListener("click", function () {
+      open({ id: b.id, name: b.name, datum: b.datum, lat: b.lat, lon: b.lon, hoehe: b.hoehe == null ? "" : b.hoehe, teilen: b.teilen === true, layers: b.layers.map(function (l) { return { von: l.von, bis: l.bis, art: l.art, bei: l.bei || "", bem: l.bem || "", gwl: l.gwl || "" }; }) });
     });
     panel.querySelector("#oCsv").addEventListener("click", function () { download(b.name.replace(/[^\wäöüÄÖÜß-]+/g, "_") + ".csv", csv(b), "text/csv"); });
     panel.querySelector("#oMap").addEventListener("click", function () { map.setView([b.lat, b.lon], 17, { animate: false }); map.getContainer().scrollIntoView({ block: "start" }); });
-    panel.querySelector("#oRemove").addEventListener("click", function () {
+    if (!ro) panel.querySelector("#oRemove").addEventListener("click", function () {
       if (confirm("Bohrung „" + b.name + "“ wirklich löschen? Das lässt sich nicht rückgängig machen.")) { all = all.filter(function (x) { return x.id !== b.id; }); tomb[b.id] = Date.now(); persist(); drawMarkers(); onChange(); list(); }
     });
     panel.querySelector("#oList").addEventListener("click", list);
@@ -241,8 +258,8 @@
   function syncCfg() { try { var c = JSON.parse(localStorage.getItem(SKEY) || "null"); return c && c.repo && c.token ? c : null; } catch (e) { return null; } }
   function b64enc(str) { var bytes = new TextEncoder().encode(str), bin = ""; for (var i = 0; i < bytes.length; i += 8192) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192)); return btoa(bin); }
   function b64dec(b64) { var bin = atob(b64.replace(/\s/g, "")), bytes = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i); return new TextDecoder().decode(bytes); }
-  function ghFetch(cfg, method, body) {
-    var url = "https://api.github.com/repos/" + cfg.repo + "/contents/" + SYNCFILE;
+  function ghFetch(cfg, method, body, repo, path) {
+    var url = "https://api.github.com/repos/" + (repo || cfg.repo) + "/contents/" + (path || SYNCFILE);
     return fetch(method === "GET" ? url + "?t=" + Date.now() : url, {
       method: method, cache: "no-store",
       headers: { "Accept": "application/vnd.github+json", "Authorization": "Bearer " + cfg.token, "X-GitHub-Api-Version": "2022-11-28", "Content-Type": "application/json" },
@@ -271,6 +288,29 @@
     var rIds = JSON.stringify(rb.map(function (b) { return b.id + ":" + stamp(b); }).sort()), rTomb = JSON.stringify(rt);
     return { changed: changed, remoteDiffers: rIds !== c || rTomb !== JSON.stringify(ts) };
   }
+  // Bohrungen mit Haken "Öffentlich teilen" in die öffentliche Datei der App schreiben (nur bei Änderung)
+  function publish(cfg, versuch) {
+    if (!cfg.pub) return Promise.resolve("");
+    versuch = versuch || 1;
+    var list = all.filter(function (b) { return b.teilen === true; }).map(function (b) {
+      return { id: b.id, name: b.name, datum: b.datum, lat: b.lat, lon: b.lon, hoehe: b.hoehe == null ? null : b.hoehe, layers: b.layers };
+    }).sort(function (a, b) { return a.id < b.id ? -1 : 1; });
+    var fehler = function (st) { return " Teilen nicht möglich (" + (st === 403 || st === 404 ? "der Token braucht Zugriff mit Contents: Read and write auf " + cfg.pub : "GitHub-Fehler " + st) + ")."; };
+    return ghFetch(cfg, "GET", null, cfg.pub, SHAREFILE).then(function (r) {
+      if (r.status === 404) return { sha: null, cur: null };
+      if (!r.ok) throw { status: r.status };
+      return r.json().then(function (j) { var d = null; try { d = JSON.parse(b64dec(j.content || "")); } catch (e) {} return { sha: j.sha, cur: d }; });
+    }).then(function (res) {
+      if (res.cur && JSON.stringify(res.cur.bohrungen || []) === JSON.stringify(list)) return " " + list.length + " öffentlich geteilt.";
+      var body = { message: "Geteilte Bohrungen aktualisiert", content: b64enc(JSON.stringify({ version: 1, bohrungen: list }, null, 1)) };
+      if (res.sha) body.sha = res.sha;
+      return ghFetch(cfg, "PUT", body, cfg.pub, SHAREFILE).then(function (r) {
+        if ((r.status === 409 || r.status === 422) && versuch < 3) return publish(cfg, versuch + 1);
+        if (!r.ok) return fehler(r.status);
+        return " " + list.length + " öffentlich geteilt.";
+      });
+    }).catch(function (e) { return e && e.status ? fehler(e.status) : ""; });
+  }
   function scheduleSync(ms) { if (!syncCfg()) return; clearTimeout(syncTimer); syncTimer = setTimeout(sync, ms); }
   function sync() {
     var cfg = syncCfg();
@@ -287,13 +327,14 @@
       }).then(function (res) {
         var m = merge(res.remote);
         if (m.changed) { persistRaw(); drawMarkers(); onChange(); if (panel && panel.querySelector("#oSyncMsg") && panel.querySelector("li")) list(); }
-        if (!m.remoteDiffers && res.remote) return done("Abgeglichen " + new Date().toLocaleTimeString("de-DE") + ": " + all.length + " Bohrung(en).", true);
+        function finish() { return publish(cfg).then(function (x) { return done("Abgeglichen " + new Date().toLocaleTimeString("de-DE") + ": " + all.length + " Bohrung(en)." + x, true); }); }
+        if (!m.remoteDiffers && res.remote) return finish();
         var body = { message: "Eigene Bohrungen abgeglichen", content: b64enc(JSON.stringify({ version: 2, bohrungen: all, geloescht: tomb }, null, 1)) };
         if (res.sha) body.sha = res.sha;
         return ghFetch(cfg, "PUT", body).then(function (r) {
           if ((r.status === 409 || r.status === 422) && versuch < 3) return round(versuch + 1);
           if (!r.ok) throw { status: r.status };
-          return done("Abgeglichen " + new Date().toLocaleTimeString("de-DE") + ": " + all.length + " Bohrung(en).", true);
+          return finish();
         });
       });
     }
@@ -307,22 +348,29 @@
       '<details><summary>Anleitung in 5 Schritten</summary><ol class="meta">' +
       '<li>Auf github.com ein <b>privates</b> Repository anlegen, z. B. „bohrungen-daten“ (mit README, damit es nicht leer ist).</li>' +
       '<li>Settings → Developer settings → Fine-grained tokens: neuen Token erzeugen, nur dieses Repository, Berechtigung „Contents: Read and write“.</li>' +
-      '<li>Hier Repository (benutzername/bohrungen-daten) und Token eintragen.</li>' +
+      '<li>Hier Repository (benutzername/bohrungen-daten) und Token eintragen. Zum Teilen muss der Token zusätzlich auf das Repository dieser App „Contents: Read and write“ haben.</li>' +
       '<li>„Verbinden und abgleichen“ tippen.</li>' +
       '<li>Auf jedem weiteren Gerät dasselbe eintragen, dann sind alle gleich.</li></ol>' +
       '<p class="meta">Das Repository muss privat sein, sonst sind die Standorte öffentlich. Der Token wird nur in diesem Gerät gespeichert und nur an GitHub gesendet.</p></details>' +
       '<label class="meta">Repository<br><input type="text" id="oRepo" placeholder="benutzername/bohrungen-daten" autocapitalize="off" autocorrect="off" value="' + esc(c ? c.repo : "") + '"></label><br>' +
+      '<label class="meta">Öffentliches Repository dieser App (für geteilte Bohrungen, leer = nichts teilen)<br><input type="text" id="oPub" autocapitalize="off" autocorrect="off" value="' + esc(c ? (c.pub || "") : defaultPub()) + '"></label><br>' +
       '<label class="meta">Token<br><input type="password" id="oToken" placeholder="github_pat_…" autocomplete="off" value="' + (c ? "••••••••" : "") + '"></label>' +
       '<div class="tools"><button type="button" id="oSyncGo">Verbinden und abgleichen</button>' + (c ? '<button type="button" class="ghost" id="oSyncOff">Trennen</button>' : "") + '</div>' +
       '<p class="meta" id="oSyncMsg">' + esc(syncMsg || (c ? "Verbunden mit " + c.repo + "." : "Nicht verbunden.")) + '</p></div>';
+  }
+  function defaultPub() {
+    try { var h = location.hostname; if (/\.github\.io$/.test(h)) { var r = location.pathname.split("/")[1]; if (r) return h.split(".")[0] + "/" + r; } } catch (e) {}
+    return "";
   }
   function bindSync() {
     var go = panel.querySelector("#oSyncGo"); if (!go) return;
     go.addEventListener("click", function () {
       var old = syncCfg(), repo = panel.querySelector("#oRepo").value.trim().replace(/^https?:\/\/github\.com\//, "").replace(/\.git$/, "").replace(/\/$/, ""), tok = panel.querySelector("#oToken").value.trim();
       if (tok === "••••••••" && old) tok = old.token;
+      var pub = panel.querySelector("#oPub").value.trim().replace(/^https?:\/\/github\.com\//, "").replace(/\.git$/, "").replace(/\/$/, "");
+      if (pub && !/^[\w.-]+\/[\w.-]+$/.test(pub)) { setSyncMsg("Das öffentliche Repository bitte als benutzername/name eintragen oder leer lassen."); return; }
       if (!/^[\w.-]+\/[\w.-]+$/.test(repo) || !tok) { setSyncMsg("Bitte Repository (benutzername/name) und Token eintragen."); return; }
-      try { localStorage.setItem(SKEY, JSON.stringify({ repo: repo, token: tok })); } catch (e) { setSyncMsg("Speichern der Verbindung im Gerät nicht möglich."); return; }
+      try { localStorage.setItem(SKEY, JSON.stringify({ repo: repo, token: tok, pub: pub })); } catch (e) { setSyncMsg("Speichern der Verbindung im Gerät nicht möglich."); return; }
       sync().then(function (ok) { if (!ok && /Token|Zugriff|Repository nicht/.test(syncMsg)) { /* Verbindung behalten, Nutzer kann Eingabe korrigieren */ } });
     });
     var off = panel.querySelector("#oSyncOff");
@@ -335,7 +383,7 @@
     else {
       h += '<ul class="list">';
       all.slice().sort(function (a, b) { return b.erstellt - a.erstellt; }).forEach(function (b) {
-        h += '<li data-id="' + b.id + '"><div class="body"><div class="row"><span class="name">' + esc(b.name) + '</span><span class="meta">' + esc(b.datum) + '</span></div><div class="meta">Endteufe ' + fmtN(depthOf(b)) + ' m · ' + b.layers.length + ' Schichten</div></div></li>';
+        h += '<li data-id="' + b.id + '"><div class="body"><div class="row"><span class="name">' + esc(b.name) + '</span><span class="meta">' + esc(b.datum) + '</span></div><div class="meta">Endteufe ' + fmtN(depthOf(b)) + ' m · ' + b.layers.length + ' Schichten' + (b.teilen === true ? ' · öffentlich' : '') + '</div></div></li>';
       });
       h += "</ul>";
     }
@@ -365,8 +413,8 @@
   global.EIGENE = {
     init: function (opts) {
       map = opts.map; panel = opts.panel; esc = opts.esc; fmtN = opts.fmtN; onChange = opts.onChange || onChange;
-      markers = L.layerGroup().addTo(map); load(); drawMarkers();
-      if (syncCfg()) { sync(); window.addEventListener("online", function () { scheduleSync(500); }); }
+      markers = L.layerGroup().addTo(map); load(); drawMarkers(); loadShared();
+      if (syncCfg()) { sync(); window.addEventListener("online", function () { scheduleSync(500); loadShared(); }); }
       try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
     },
     open: function () { open(); }, list: list, show: show, asBohrungen: asBohrungen,
