@@ -1,0 +1,1 @@
+window.KREISE_LISTE = [{"id":"oberhavel","name":"Landkreis Oberhavel","datei":"data/oberhavel/daten.js","n":4327,"nl":4120,"mb":7.6,"standard":true},{"id":"ostprignitz-ruppin","name":"Landkreis Ostprignitz-Ruppin","datei":"data/ostprignitz-ruppin/daten.js","n":4318,"nl":4121,"mb":4.0,"standard":true}];

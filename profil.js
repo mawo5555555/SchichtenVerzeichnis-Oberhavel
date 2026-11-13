@@ -31,7 +31,7 @@
         for (var k = 0; k < p.layers.length; k++) {
           var l = p.layers[k];
           if (l.from <= c && c < l.to) {
-            var w = 1 / (it.d + 100);          // nähere Bohrungen zählen stärker
+            var w = 1 / Math.pow(it.d + 100, 2);          // nähere Bohrungen zählen stärker
             var g = groupOf(l.cat);
             gW[g] = (gW[g] || 0) + w; cW[l.cat] = (cW[l.cat] || 0) + w; tot += w; cnt++;
             return;
@@ -98,6 +98,136 @@
       }
     });
     return { segs: segs, limit: limit, deep: deep, minN: minN, maxD: maxD };
+  }
+
+  /* ---------- Brunnen-Eignung: wo lohnt sich ein Filter? ---------- */
+  var GRAIN = { "Kies": 1, "Grobsand": 0.9, "Sand (o. n. A.)": 0.6, "Mittelsand": 0.65, "Feinsand": 0.35 };
+  var WELL_STATE = { wasser: null, auto: null };   // vom Nutzer eingegebener Wasserstand (m unter Gelände), null = unbekannt
+  function assessWells(items) {
+    var maxD = 0;
+    items.forEach(function (it) { if (it.prof.depthRead > maxD) maxD = it.prof.depthRead; });
+    maxD = Math.min(Math.ceil(maxD), 250);
+    var bins = [];
+    for (var d = 0; d < maxD; d++) {
+      var c = d + 0.5, aqW = 0, tot = 0, n = 0, nAq = 0, grain = 0, grainW = 0;
+      items.forEach(function (it) {
+        var p = it.prof;
+        if (p.depthRead < c) return;
+        for (var k = 0; k < p.layers.length; k++) {
+          var l = p.layers[k];
+          if (l.from <= c && c < l.to) {
+            var w = 1 / Math.pow(it.d + 100, 2);
+            tot += w; n++;
+            if (isAquifer(l.cat)) { aqW += w; nAq++; grain += w * (GRAIN[l.cat] || 0.5); grainW += w; }
+            return;
+          }
+        }
+      });
+      bins.push({ p: tot ? aqW / tot : 0, n: n, nAq: nAq, grain: grainW ? grain / grainW : 0 });
+    }
+    // zusammenhängende Tiefenbereiche, in denen mehr als die Hälfte (gewichtet) der Bohrungen Sand/Kies hat
+    var hz = [], cur = null;
+    for (var m = 0; m < bins.length; m++) {
+      if (bins[m].p >= 0.5 && bins[m].n > 0) {
+        if (!cur) cur = { from: m, to: m + 1 }; else cur.to = m + 1;
+      } else if (cur) { hz.push(cur); cur = null; }
+    }
+    if (cur) hz.push(cur);
+    var out = [];
+    hz.forEach(function (h) {
+      var th = h.to - h.from;
+      if (th < 2) return;
+      var pm = 0, gm = 0, nmin = 1e9, nmax = 0;
+      for (var i = h.from; i < h.to; i++) { pm += bins[i].p; gm += bins[i].grain; nmin = Math.min(nmin, bins[i].n); nmax = Math.max(nmax, bins[i].n); }
+      pm /= th; gm /= th;
+      // wie viele Bohrungen durchörtern diesen Bereich tatsächlich als Sand/Kies (mindestens die halbe Strecke)
+      var hit = 0, reach = 0;
+      items.forEach(function (it) {
+        var p = it.prof;
+        if (p.depthRead < h.from + th / 2) return;
+        reach++;
+        var cov = 0;
+        p.layers.forEach(function (l) { if (isAquifer(l.cat)) cov += Math.max(0, Math.min(l.to, h.to) - Math.max(l.from, h.from)); });
+        if (cov >= th * 0.5) hit++;
+      });
+      // Deckschicht: das Gestein direkt darüber (zwei Meter), wenn der Bereich nicht an der Oberfläche beginnt
+      var cover = null;
+      if (h.from >= 1) {
+        var cw = {};
+        for (var j = Math.max(0, h.from - 3); j < h.from; j++) {
+          items.forEach(function (it) {
+            var p = it.prof, c = j + 0.5;
+            if (p.depthRead < c) return;
+            for (var k = 0; k < p.layers.length; k++) { var l = p.layers[k]; if (l.from <= c && c < l.to) { cw[l.cat] = (cw[l.cat] || 0) + 1 / Math.pow(it.d + 100, 2); return; } }
+          });
+        }
+        var best = null; Object.keys(cw).forEach(function (cat) { if (best === null || cw[cat] > cw[best]) best = cat; });
+        cover = best;
+      }
+      var bindig = cover && /Geschiebemergel|Ton|Schluff|Torf/.test(cover);
+      var score = 0.4 * Math.min(th / 10, 1) + 0.35 * (reach ? hit / reach : 0) + 0.25 * gm;
+      var enough = reach >= 3;
+      var cls = score >= 0.7 && enough ? "gut" : score >= 0.5 ? "mittel" : "gering";
+      if (!enough && cls === "gut") cls = "mittel";
+      if (gm < 0.5 && cls === "gut") cls = "mittel";      // reiner Feinsand: Ergiebigkeit und Filter oft schwierig
+      out.push({ from: h.from, to: h.to, th: th, hit: hit, reach: reach, grain: gm, cover: cover, bindig: bindig, score: score, cls: cls, enough: enough });
+    });
+    return out;
+  }
+
+  // Wasserstand für eine bestimmte Tiefe: nur Messstellen, deren Filter in ähnlicher Tiefe sitzt (Überlappung, 3 m Toleranz)
+  function headFor(h) {
+    var A = WELL_STATE.auto;
+    if (!A || A.ge === null || A.ge === undefined || !A.mess) return null;
+    if (A.isoDeep && h.from >= 15 && h.from <= 120) return { depth: Math.max(0, Math.round((A.ge - A.isoDeep.v) * 10) / 10), n: 0, d: A.isoDeep.d, spread: 0, karte: true };
+    var m = A.mess.filter(function (s) { return s.fuk >= h.from - 3 && s.fok <= h.to + 3; });
+    if (!m.length) return null;
+    m.sort(function (a, b) { return a.d - b.d; });
+    var use = m.slice(0, 4), sw = 0, sl = 0;
+    use.forEach(function (u) { var w = 1 / Math.pow(u.d + 500, 2); sw += w; sl += w * u.lv; });
+    var lvs = use.map(function (u) { return u.lv; });
+    return { depth: Math.max(0, Math.round((A.ge - sl / sw) * 10) / 10), n: use.length, d: use[0].d, spread: Math.max.apply(null, lvs) - Math.min.apply(null, lvs), name: use[0].n };
+  }
+  function fmtKm(m) { return m < 1000 ? Math.round(m) + " m" : (m / 1000).toFixed(1).replace(".", ",") + " km"; }
+
+  function grainText(g) { return g >= 0.85 ? "überwiegend Kies/Grobsand (günstig)" : g >= 0.6 ? "überwiegend Mittelsand (brauchbar)" : "überwiegend Feinsand (ergiebigkeitsschwach)"; }
+
+  function renderWells(items, wells) {
+    var hz = assessWells(items);
+    var A = WELL_STATE.auto, hasAuto = A && A.depth !== null && A.depth !== undefined;
+    var w = WELL_STATE.wasser !== null ? WELL_STATE.wasser : (hasAuto ? A.depth : null);
+    var nearD = Math.min.apply(null, items.map(function (it) { return it.d; }));
+    var rel = nearD < 500 ? ["gut", "im Rückwärtstest stimmte die Aussage Sand/Kies ja oder nein bei etwa 74 % der Meter"] : nearD < 1500 ? ["mittel", "im Test etwa 67 % der Meter"] : ["gering", "hier ist die Schätzung kaum besser als ein Tiefen-Mittelwert (im Test etwa 60 %)"];
+    var head = '<div class="wells"><h3>Wo lohnt sich ein Brunnen?</h3>';
+    var inp = '<label class="wl">Wasserstand (m unter Gelände) <input type="number" id="wlevel" min="0" max="100" step="0.5" placeholder="' + (hasAuto ? fmtN(A.depth) : '') + '" value="' + (WELL_STATE.wasser === null ? '' : WELL_STATE.wasser) + '" style="width:5em"> <span class="meta">' + (WELL_STATE.wasser !== null ? 'von dir eingegeben' : (hasAuto ? 'geschätzt' : 'unbekannt, kannst du eintragen')) + '</span></label>';
+    var details = (A && A.extra ? A.extra : '') + (A && A.stations ? A.stations : '');
+    if (!hz.length) {
+      return head + '<p class="verdict"><b>Kein Brunnenhorizont erkennbar:</b> Im ausgewerteten Bereich gibt es keinen zusammenhängenden Sand-/Kieskörper von mindestens 2 m, der in mehr als der Hälfte der Bohrungen auftritt.</p>' + inp + '<details class="more"><summary>Einzelheiten und Quellen</summary>' + details + '</details></div>';
+    }
+    // je Bereich: Wasserstand dieser Tiefe, trocken oder nicht
+    hz.forEach(function (h) {
+      var hd = WELL_STATE.wasser !== null ? null : headFor(h);
+      h.hd = hd; h.wl = hd ? hd.depth : w; h.dry = h.wl !== null && h.to <= h.wl;
+    });
+    // übliche Brunnentiefen (Oberkante bis 60 m, nicht trocken) zuerst; nur wenn es dort nichts gibt, auch tiefere Bereiche
+    var ranked = hz.slice().sort(function (a, b) { return (a.dry - b.dry) || ((a.from > 60) - (b.from > 60)) || (b.score - a.score); });
+    var best = ranked[0];
+    function gestein(h) { return h.grain >= 0.85 ? "Kies/Grobsand" : h.grain >= 0.6 ? "Mittelsand" : "Feinsand"; }
+    var fazit = '<ul class="verdict" style="margin:6px 0 8px 18px;padding:0">';
+    if (best.dry) fazit += '<li><b>Alle gefundenen Sandbereiche liegen über dem geschätzten Wasserstand</b> (' + fmtN(w) + ' m). Ein Brunnen müsste tiefer reichen, dort zeigen die Daten keinen sicheren Leiter.</li>';
+    else fazit += '<li><b>Am besten: ' + best.from + ' – ' + best.to + ' m</b> (' + gestein(best) + ', ' + best.th + ' m mächtig, Eignung ' + best.cls + ').' + (best.from < 1 ? ' Ohne Deckschicht, ungeschützt.' : best.bindig ? ' Darüber ' + esc(best.cover) + ': eher gespannt und geschützt.' : '') + (best.from > 60 ? ' <b>Achtung:</b> In üblichen Brunnentiefen bis 60 m ist kein Sand-/Kieskörper belegt, dieser Bereich liegt sehr tief.' : '') + '</li>';
+    var wtxt = best.hd ? 'In dieser Tiefe steht das Wasser vermutlich bei etwa <b>' + fmtN(best.hd.depth) + ' m</b> unter Gelände (' + (best.hd.karte ? 'nach den Grundwassergleichen der Hydrogeologischen Karte' : 'nach nahen Messstellen mit Filter in dieser Tiefe') + ').' : (best.wl !== null ? 'Das Grundwasser steht ungefähr bei <b>' + fmtN(best.wl) + ' m</b> unter Gelände.' : '');
+    if (wtxt) fazit += '<li>' + wtxt + (A && A.swing ? ' ' + esc(A.swing) : '') + '</li>';
+    fazit += '<li>Verlässlichkeit <b>' + rel[0] + '</b>: nächste ausgewertete Bohrung in ' + fmtKm(nearD) + (best.from >= 10 ? '; die Tiefe tiefer Leiter kann um etwa 7 m abweichen' : '') + '.</li></ul>';
+    var tbl = '<table class="layers"><tr><td class="meta">Filterbereich</td><td class="meta">Mächtigkeit</td><td class="meta">Belegung</td><td class="meta">Eignung</td></tr>';
+    hz.sort(function (a, b) { return a.from - b.from; }).forEach(function (h) {
+      var wet = h.wl === null ? "" : (h.dry ? " – liegt über dem Wasserstand (trocken)" : h.from < h.wl ? " – nur der Teil unter " + fmtN(h.wl) + " m wäre wasserführend" : "");
+      if (h.hd) wet += "; Wasserstand dieser Tiefe etwa " + fmtN(h.hd.depth) + " m (" + (h.hd.karte ? "nach den Grundwassergleichen der Karte" : h.hd.n + " Messstelle" + (h.hd.n > 1 ? "n" : "") + ", nächste in " + fmtKm(h.hd.d)) + ")";
+      tbl += '<tr class="' + (h.cls === "gut" ? "gwl" : "") + '"><td>' + h.from + ' – ' + h.to + ' m</td><td>' + h.th + ' m</td><td>' + h.hit + ' von ' + h.reach + '</td><td><b>' + h.cls + '</b></td></tr>' +
+        '<tr><td colspan="4" class="meta">' + grainText(h.grain) + '; ' + (h.from < 1 ? 'ohne Deckschicht' : (h.bindig ? 'darüber ' + esc(h.cover) : 'darüber ' + esc(h.cover || 'unbekannt') + ' (keine dichte Deckschicht)')) + (h.enough ? '' : '; wenig belegt') + esc(wet) + '</td></tr>';
+    });
+    tbl += '</table><p class="meta">Eignung = Mächtigkeit (40 %), Anteil der Bohrungen mit Sand/Kies (35 %), Körnung (25 %). ' + rel[1] + '. Tiefere Leiter (ab etwa 10 m) fand der Test in 65 % der Fälle. Ergiebigkeit und tatsächlicher Wasserstand ergeben sich erst durch Bohrung und Pumpversuch.</p>';
+    return head + fazit + inp + '<details class="more"><summary>Einzelheiten und Quellen</summary>' + tbl + details + '</details></div>';
   }
 
   function confText(c) { return c >= 0.75 ? "ziemlich einheitlich" : c >= 0.5 ? "teils uneinheitlich" : "unsicher"; }
@@ -170,8 +300,10 @@
       '<span><span class="sw" style="background:' + CAT_COL["Schluff"] + '"></span>Schluff</span>' +
       '<span><span class="sw" style="background:' + CAT_COL["Ton"] + '"></span>Ton</span>' +
       '<span><span class="sw" style="background:' + CAT_COL["Torf / Mudde"] + '"></span>Torf / Mudde</span></div>' +
-      '<div class="verdict">' + verdict + '</div>' + table +
+      '<div class="verdict">' + verdict + '</div>' + renderWells(items) + table +
       '<details class="more"><summary>Einzelheiten je Meter anzeigen</summary>' + details + '</details>';
+    var wl = box.querySelector('#wlevel');
+    if (wl) wl.addEventListener('change', function () { var v = parseFloat(wl.value); WELL_STATE.wasser = isNaN(v) ? null : v; renderExpected(box, items, nSel, bad); });
   }
 
   function detailRows(profs) {
@@ -238,5 +370,5 @@
     return svg + '</svg>';
   }
 
-  global.PROFIL = { drawColumn: drawColumn, renderExpected: renderExpected, buildExpected: buildExpected, CAT_COL: CAT_COL, isAquifer: isAquifer, esc: esc, fmtN: fmtN };
+  global.PROFIL = { drawColumn: drawColumn, renderExpected: renderExpected, setWaterAuto: function (o) { WELL_STATE.auto = o; }, assessWells: assessWells, buildExpected: buildExpected, CAT_COL: CAT_COL, isAquifer: isAquifer, esc: esc, fmtN: fmtN };
 })(window);

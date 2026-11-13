@@ -1,6 +1,6 @@
 {
-  "name": "Schichtenverzeichnis Oberhavel",
-  "short_name": "Schichten",
+  "name": "Wünschelroute 2.0",
+  "short_name": "Wünschelroute",
   "description": "Geschätztes Schichtenverzeichnis und Grundwasserleiter für den Landkreis Oberhavel, offline nutzbar.",
   "start_url": "./index.html",
   "scope": "./",

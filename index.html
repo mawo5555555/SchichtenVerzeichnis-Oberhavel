@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Schichtenverzeichnis Oberhavel</title>
+<title>Wünschelroute 2.0</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icon-180.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="Schichten">
+<meta name="apple-mobile-web-app-title" content="Wünschelroute">
 <meta name="theme-color" content="#183a5a">
 <link rel="stylesheet" href="lib/leaflet.css">
 <link rel="stylesheet" href="style.css">
@@ -23,9 +23,9 @@
 </head>
 <body>
 <header>
-  <h1>Schichtenverzeichnis Oberhavel</h1>
+  <h1>Wünschelroute 2.0</h1>
   <form class="search" id="searchForm">
-    <input type="text" id="q" list="orte" placeholder="Ort im Landkreis suchen, z. B. Oranienburg" aria-label="Ort im Landkreis suchen">
+    <input type="text" id="q" list="orte" placeholder="Ort suchen, z. B. Oranienburg oder Neuruppin" aria-label="Ort suchen">
     <datalist id="orte"></datalist>
     <button type="submit">Suchen</button>
   </form>
@@ -38,8 +38,10 @@
       <option value="5000">5 km</option>
     </select>
   </label>
+  <label>Grundstück <select id="plotSel"><option value="0">aus</option><option value="50">Radius 50 m</option><option value="100">Radius 100 m</option><option value="200">Radius 200 m</option><option value="400">Radius 400 m</option></select></label>
   <label><input type="checkbox" id="optPoints" checked> Bohrpunkte</label>
   <label><input type="checkbox" id="optRelief" checked> Relief</label>
+  <label>Eignungskarte <select id="optEign"><option value="">aus</option><option value="0">Sand/Kies bei 5 m</option><option value="1">Sand/Kies bei 10 m</option><option value="2">Sand/Kies bei 20 m</option><option value="3">Sand/Kies bei 40 m</option><option value="4">Sand/Kies bei 60 m</option></select> <span class="hint" title="Wahrscheinlichkeit für Sand/Kies in dieser Tiefe, aus den Nachbarbohrungen gerechnet (500-m-Raster)" style="white-space:nowrap">hell = wenig, dunkelblau = wahrscheinlich</span></label>
   <label>Ansicht <select id="baseSel"><option value="map">Karte</option><option value="sat">Satellit</option></select></label>
   <label><input type="checkbox" id="optNames" checked> Straßennamen</label>
   <label><input type="checkbox" id="optOwn" checked> Eigene Bohrungen</label>
@@ -47,13 +49,15 @@
   <button type="button" class="ghost" id="btnMyOwn">Meine Bohrungen</button>
 </header>
 <main>
-  <div id="map" role="application" aria-label="Karte des Landkreises Oberhavel"></div>
+  <fieldset class="kreise"><legend>Landkreise in der Auswertung</legend><p class="hint">Alle Bohrungen der angehakten Landkreise fließen gemeinsam in die Umkreissuche ein, auch über Kreisgrenzen hinweg.</p><div id="kreisWahl"></div><p class="hint"><a href="#" id="kreiseAlle">Alle Landkreise anhaken</a> (lädt mehr Daten, auf dem iPhone besser nur die nötigen).</p></fieldset>
+  <div id="map" role="application" aria-label="Karte der ausgewählten Landkreise"></div>
   <aside id="side">
     <h2>Standort auswählen</h2>
     <p class="hint">Tippe oder klicke in die Karte oder suche einen Ort. Die App berechnet sofort aus den Bohrungen im Umkreis ein geschätztes Schichtenverzeichnis mit Vermutung zu den Grundwasserleitern. Alles läuft ohne Internet.</p>
     <div id="ownPanel"></div>
     <div class="offline-note" id="stand"></div>
     <div id="aquifer"></div>
+    <div id="plotBox"></div>
     <div id="avgBox"></div>
     <div id="summary"></div>
     <div id="results"></div>
@@ -71,30 +75,71 @@
 if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(function () {});
 </script>
 <script src="lib/leaflet.js"></script>
-<script src="data/boundary.js?v=5"></script>
-<script src="data/basemap.js?v=5"></script>
-<script src="data/basemap_detail.js?v=5"></script>
-<script src="data/elevation.js?v=5"></script>
-<script src="data/aquifer.js?v=5"></script>
-<script src="data/boreholes.js?v=5"></script>
+<script src="data/messstellen.js?v=2"></script>
+<script src="data/kreise.js?v=1"></script>
+<script>
+/* Landkreisdaten werden erst geladen, wenn der Landkreis angehakt ist (spart Speicher und Ladezeit, besonders auf dem iPhone). */
+(function () {
+  var sel = null; try { sel = JSON.parse(localStorage.getItem("schichten.kreise") || "null"); } catch (e) {}
+  var liste = window.KREISE_LISTE || [];
+  var an = liste.filter(function (k) { return sel && sel.indexOf(k.id) >= 0; });
+  if (/[?&]alle\b/.test(location.search)) an = liste;   // Mac-Offline-Paket: alle Landkreise
+  if (!an.length) an = liste.filter(function (k) { return k.standard; });
+  window.KREISE_AN = an.map(function (k) { return k.id; });
+  an.forEach(function (k) { document.write('<script src="' + k.datei + '?v=11"><\/script>'); });
+})();
+</script>
 <script src="profil.js"></script>
 <script src="eigene.js"></script>
 <script>
 (function () {
   var esc = PROFIL.esc, fmtN = PROFIL.fmtN, isAquifer = PROFIL.isAquifer;
-  var B = window.BOHRUNGEN, BASE = window.BASEMAP, GRID = window.AQUIFER_GRID, KREIS = window.KREIS_GRENZE;
+  /* ---------- Landkreise: Auswahl und gemeinsamer Datenbestand ---------- */
+  var ALLE = window.KREISE_LISTE || [];
+  var AKTIV = (window.KREISE_AN || []).map(function (id) { return window.KREIS_DATEN[id]; }).filter(Boolean);
+  var wahl = document.getElementById("kreisWahl");
+  ALLE.forEach(function (k) {
+    var lab = document.createElement("label"), cb = document.createElement("input");
+    cb.type = "checkbox"; cb.value = k.id; cb.checked = (window.KREISE_AN || []).indexOf(k.id) >= 0;
+    lab.appendChild(cb); lab.appendChild(document.createTextNode(" " + k.name + " (" + k.n + " Bohrungen, " + k.mb + " MB)"));
+    wahl.appendChild(lab);
+    cb.addEventListener("change", function () {
+      var an = Array.prototype.filter.call(wahl.querySelectorAll("input"), function (x) { return x.checked; }).map(function (x) { return x.value; });
+      if (!an.length) { cb.checked = true; return; }
+      try { localStorage.setItem("schichten.kreise", JSON.stringify(an)); } catch (e) {}
+      if (/[?&]alle\b/.test(location.search)) location.href = location.href.split("?")[0]; else location.reload();
+    });
+  });
+
+  document.getElementById("kreiseAlle").addEventListener("click", function (e) {
+    e.preventDefault();
+    try { localStorage.setItem("schichten.kreise", JSON.stringify(ALLE.map(function (k) { return k.id; }))); } catch (x) {}
+    location.href = location.href.split("?")[0].split("#")[0];
+  });
+
+  var B = [], BASE = { orte: [], strassen: [], fluesse: [], seen: [] }, DETAIL = { strassen: [], bahn: [] };
+  var GRIDS = [], ELS = [], RINGS = [], HYKS = [], EIGNS = [], HRS = [], ISOS = [];
+  AKTIV.forEach(function (k) {
+    B = B.concat(k.bohrungen);
+    Object.keys(BASE).forEach(function (f) { BASE[f] = BASE[f].concat(k.basemap[f] || []); });
+    DETAIL.strassen = DETAIL.strassen.concat(k.basemap_detail.strassen || []);
+    DETAIL.bahn = DETAIL.bahn.concat(k.basemap_detail.bahn || []);
+    GRIDS.push(k.aquifer); ELS.push(k.elevation); if (k.hyk) HYKS.push(k.hyk); if (k.eignung) EIGNS.push(k.eignung); if (k.isohypsen) ISOS.push(k.isohypsen); if (k.hydroraum) HRS.push(k.hydroraum);
+    RINGS.push(k.grenze[0].map(function (p) { return [p[1], p[0]]; }));
+  });
+  // Bohrungen, die in zwei Landkreis-Dateien vorkommen (Randbereiche), nur einmal führen; die mit gelesenen Schichten gewinnt
+  (function () { var seen = {}, out = []; B.forEach(function (b) { var j = seen[b.i]; if (j === undefined) { seen[b.i] = out.length; out.push(b); } else if (b.l && !out[j].l) out[j] = b; }); B = out; })();
   var MAX_LIST = 50;
 
-  document.getElementById("stand").textContent = "Offline-Datenstand: " + (window.DATENSTAND || "unbekannt") + " · " + B.length + " Bohrungen mit Schichtenverzeichnis, davon " +
+  document.getElementById("stand").textContent = "Offline-Datenstand: " + AKTIV.map(function (k) { return k.stand; }).join(", ") + " · " + B.length + " Bohrungen mit Schichtenverzeichnis, davon " +
     B.filter(function (b) { return b.l; }).length + " mit gelesenen Schichten.";
 
   /* ---------- Karte (nur Vektordaten, keine Kacheln) ---------- */
   var map = L.map("map", { preferCanvas: true, minZoom: 9, maxZoom: 18, zoomSnap: 0.5, zoomControl: true });
   map.attributionControl.setPrefix(false);
   map.attributionControl.addAttribution("© OpenStreetMap-Mitwirkende · © LBGR Brandenburg");
-  var ring = KREIS[0].map(function (p) { return [p[1], p[0]]; });
-  var kreisLayer = L.polygon(ring, { color: "#3b4a5a", weight: 2, fill: false, interactive: false }).addTo(map);
-  map.fitBounds(kreisLayer.getBounds());
+  var kreisLayers = RINGS.map(function (r) { return L.polygon(r, { color: "#3b4a5a", weight: 2, fill: false, interactive: false }).addTo(map); });
+  map.fitBounds(L.featureGroup(kreisLayers).getBounds());
 
   var satMode = false, vecGroup = L.layerGroup().addTo(map);
   var cv = L.canvas({ padding: 0.3 });
@@ -107,13 +152,15 @@ if ("serviceWorker" in navigator && location.protocol === "https:") navigator.se
   var detailLayer = L.layerGroup();
   var DET = { tertiary: ["#b9a36a", 2], unclassified: ["#9a9a9a", 1.4], residential: ["#a3a3a3", 1.3], living_street: ["#b5b5b5", 1.1], primary: ["#e8b85c", 2], secondary: ["#bdbdbd", 1.5] };
   var detailCv = L.canvas({ padding: 0.2 });
-  (window.BASEMAP_DETAIL.strassen || []).forEach(function (s) { var st = DET[s.k] || ["#ccc", 1]; L.polyline(s.p, { renderer: detailCv, color: st[0], weight: st[1], interactive: false }).addTo(detailLayer); });
-  (window.BASEMAP_DETAIL.bahn || []).forEach(function (p) { L.polyline(p, { renderer: detailCv, color: "#7b7b7b", weight: 1.2, dashArray: "5 4", interactive: false }).addTo(detailLayer); });
+  (DETAIL.strassen || []).forEach(function (s) { var st = DET[s.k] || ["#ccc", 1]; L.polyline(s.p, { renderer: detailCv, color: st[0], weight: st[1], interactive: false }).addTo(detailLayer); });
+  (DETAIL.bahn || []).forEach(function (p) { L.polyline(p, { renderer: detailCv, color: "#7b7b7b", weight: 1.2, dashArray: "5 4", interactive: false }).addTo(detailLayer); });
   function detailVisibility() { if (map.getZoom() >= 13 && !satMode) { if (!map.hasLayer(detailLayer)) detailLayer.addTo(map); } else if (map.hasLayer(detailLayer)) map.removeLayer(detailLayer); }
   map.on("zoomend", detailVisibility); detailVisibility();
 
   /* ---------- Topografie: Relief (Schummerung) und Höhenlinien aus dem Höhenraster ---------- */
-  var EL = window.ELEVATION, reliefLayer = null, contourGroup = L.layerGroup();
+  var reliefLayers = [], contourGroup = L.layerGroup();
+  ELS.forEach(function (EL, kIdx) {
+  var ring = RINGS[kIdx];
   if (EL && EL.rows) {
     var ER = EL.rows, EC = EL.cols;
     var elev = function (r, c) { var v = EL.dm[r * EC + c]; return v === -32768 ? null : v / 10; };
@@ -148,9 +195,9 @@ if ("serviceWorker" in navigator && location.protocol === "https:") navigator.se
     var mask = mcx.getImageData(0, 0, EC, ER).data;
     for (var q = 0; q < EC * ER; q++) eimg.data[q * 4 + 3] = Math.min(eimg.data[q * 4 + 3], mask[q * 4 + 3]);
     ecx.putImageData(eimg, 0, 0);
-    map.createPane("relief").style.zIndex = 210;
-    reliefLayer = L.imageOverlay(cvs.toDataURL(), [[EL.origin_lat, EL.origin_lon], [EL.origin_lat + (ER - 1) * EL.step_lat, EL.origin_lon + (EC - 1) * EL.step_lon]],
-      { pane: "relief", opacity: 0.5, interactive: false }).addTo(map);
+    if (!map.getPane("relief")) map.createPane("relief").style.zIndex = 210;
+    reliefLayers.push(L.imageOverlay(cvs.toDataURL(), [[EL.origin_lat, EL.origin_lon], [EL.origin_lat + (ER - 1) * EL.step_lat, EL.origin_lon + (EC - 1) * EL.step_lon]],
+      { pane: "relief", opacity: 0.5, interactive: false }).addTo(map));
 
     // Höhenlinien alle 5 m (Marching Squares), jede 25. Linie kräftiger
     var seg = {};
@@ -177,9 +224,10 @@ if ("serviceWorker" in navigator && location.protocol === "https:") navigator.se
       L.polyline(seg[k], { renderer: detailCv, color: idx ? "#a07a45" : "#c2a77a", weight: idx ? 1.2 : 0.7, opacity: 0.85, interactive: false }).addTo(contourGroup);
     });
   }
+  });
   function reliefVisibility() {
     var on = document.getElementById("optRelief").checked;
-    if (reliefLayer) { if (on) { if (!map.hasLayer(reliefLayer)) reliefLayer.addTo(map); } else if (map.hasLayer(reliefLayer)) map.removeLayer(reliefLayer); }
+    reliefLayers.forEach(function (reliefLayer) { if (on) { if (!map.hasLayer(reliefLayer)) reliefLayer.addTo(map); } else if (map.hasLayer(reliefLayer)) map.removeLayer(reliefLayer); });
     var cont = on && map.getZoom() >= 12;
     if (cont) { if (!map.hasLayer(contourGroup)) contourGroup.addTo(map); } else if (map.hasLayer(contourGroup)) map.removeLayer(contourGroup);
   }
@@ -189,7 +237,7 @@ if ("serviceWorker" in navigator && location.protocol === "https:") navigator.se
   var labelCv = document.createElement("canvas");
   labelCv.style.cssText = "position:absolute;left:0;top:0;pointer-events:none;z-index:450";
   map.getContainer().appendChild(labelCv);
-  var NAMED = (BASE.strassen || []).concat(window.BASEMAP_DETAIL.strassen || []).filter(function (s) { return s.n && s.p && s.p.length > 1; });
+  var NAMED = (BASE.strassen || []).concat(DETAIL.strassen || []).filter(function (s) { return s.n && s.p && s.p.length > 1; });
   var RANK = { motorway: 5, trunk: 5, primary: 5, secondary: 4, tertiary: 3, unclassified: 2, residential: 1, living_street: 1 };
   function drawLabels() {
     var size = map.getSize(), dpr = window.devicePixelRatio || 1, ctx = labelCv.getContext("2d");
@@ -239,7 +287,7 @@ if ("serviceWorker" in navigator && location.protocol === "https:") navigator.se
       if (!map.hasLayer(vecGroup)) vecGroup.addTo(map);
       if (reliefBefore !== null) rel.checked = reliefBefore;
     }
-    kreisLayer.setStyle({ color: satMode ? "#ffd54f" : "#3b4a5a" });
+    kreisLayers.forEach(function (kl) { kl.setStyle({ color: satMode ? "#ffd54f" : "#3b4a5a" }); });
     reliefVisibility(); detailVisibility(); drawLabels();
     document.getElementById("baseSel").value = mode;
     try { localStorage.setItem("schichten.basis", mode); } catch (e) {}
@@ -285,30 +333,24 @@ if ("serviceWorker" in navigator && location.protocol === "https:") navigator.se
     return 2 * R * Math.asin(Math.sqrt(a));
   }
   function fmtM(m) { return m < 1000 ? Math.round(m) + " m" : (m / 1000).toFixed(1).replace(".", ",") + " km"; }
-  function inKreis(lat, lon) {
-    var c = false, j = ring.length - 1;
-    ring.forEach(function (p, i) {
-      var q = ring[j];
-      if (((p[0] > lat) !== (q[0] > lat)) && (lon < (q[1] - p[1]) * (lat - p[0]) / (q[0] - p[0]) + p[1])) c = !c;
-      j = i;
-    });
-    return c;
-  }
 
   /* ---------- Grundwasserleiter aus dem Raster ---------- */
   var VULN = { high: "hoch", medium: "mittel", low: "gering", veryHigh: "sehr hoch", veryLow: "sehr gering" };
   var MEDIA = { porous: "Porengrundwasserleiter", fracture: "Kluftgrundwasserleiter", karst: "Karstgrundwasserleiter" };
   function lookupAquifer(lat, lon) {
-    var r0 = Math.round((lat - GRID.origin_lat) / GRID.step_lat), c0 = Math.round((lon - GRID.origin_lon) / GRID.step_lon);
     var best = null, bd = 1e12;
-    for (var dr = -2; dr <= 2; dr++) for (var dc = -2; dc <= 2; dc++) {
-      var r = r0 + dr, c = c0 + dc;
-      if (r < 0 || c < 0 || r >= GRID.rows || c >= GRID.cols) continue;
-      var k = GRID.cells[r * GRID.cols + c];
-      if (k < 0) continue;
-      var d = dist(lat, lon, GRID.origin_lat + r * GRID.step_lat, GRID.origin_lon + c * GRID.step_lon);
-      if (d < bd) { bd = d; best = { cls: GRID.classes[k], d: d }; }
-    }
+    GRIDS.forEach(function (GRID) {
+      if (!GRID.rows) return;
+      var r0 = Math.round((lat - GRID.origin_lat) / GRID.step_lat), c0 = Math.round((lon - GRID.origin_lon) / GRID.step_lon);
+      for (var dr = -2; dr <= 2; dr++) for (var dc = -2; dc <= 2; dc++) {
+        var r = r0 + dr, c = c0 + dc;
+        if (r < 0 || c < 0 || r >= GRID.rows || c >= GRID.cols) continue;
+        var k = GRID.cells[r * GRID.cols + c];
+        if (k < 0) continue;
+        var d = dist(lat, lon, GRID.origin_lat + r * GRID.step_lat, GRID.origin_lon + c * GRID.step_lon);
+        if (d < bd) { bd = d; best = { cls: GRID.classes[k], d: d }; }
+      }
+    });
     return best;
   }
   function renderAquifer(lat, lon) {
@@ -415,6 +457,133 @@ if ("serviceWorker" in navigator && location.protocol === "https:") navigator.se
     summaryEl.innerHTML = html + '</table></div>';
   }
 
+  /* ---------- Eignungskarte: vorgerechnete Wahrscheinlichkeit für Sand/Kies in fester Tiefe ---------- */
+  var eignLayers = [];
+  var EIGN_COL = [null, [255, 245, 200], [255, 225, 150], [250, 195, 110], [235, 160, 85], [205, 120, 80], [160, 90, 110], [100, 80, 150], [50, 80, 175], [20, 70, 200]];
+  function eignShow() {
+    eignLayers.forEach(function (l) { map.removeLayer(l); }); eignLayers = [];
+    var sel = document.getElementById("optEign").value; if (sel === "") return;
+    var di = parseInt(sel, 10);
+    EIGNS.forEach(function (E) {
+      var cv = document.createElement("canvas"); cv.width = E.cols; cv.height = E.rows;
+      var cx = cv.getContext("2d"), im = cx.createImageData(E.cols, E.rows), str = E.m[di];
+      for (var r = 0; r < E.rows; r++) for (var c = 0; c < E.cols; c++) {
+        var v = +str[r * E.cols + c], o = (((E.rows - 1 - r) * E.cols) + c) * 4;
+        if (!v) { im.data[o + 3] = 0; continue; }
+        var col = EIGN_COL[v]; im.data[o] = col[0]; im.data[o + 1] = col[1]; im.data[o + 2] = col[2]; im.data[o + 3] = 190;
+      }
+      cx.putImageData(im, 0, 0);
+      var b = [[E.origin_lat - E.step_lat / 2, E.origin_lon - E.step_lon / 2], [E.origin_lat + (E.rows - 0.5) * E.step_lat, E.origin_lon + (E.cols - 0.5) * E.step_lon]];
+      var lay = L.imageOverlay(cv.toDataURL(), b, { opacity: 0.8, interactive: false }).addTo(map); eignLayers.push(lay);
+    });
+  }
+  document.getElementById("optEign").addEventListener("change", eignShow);
+  /* ---------- Landschaftseinheit (Hydrogeologische Raumgliederung) ---------- */
+  function hraumAt(lat, lon) {
+    for (var i = 0; i < HRS.length; i++) {
+      var G = HRS[i], r = Math.round((lat - G.origin_lat) / G.step_lat), c = Math.round((lon - G.origin_lon) / G.step_lon);
+      if (r < 0 || c < 0 || r >= G.rows || c >= G.cols) continue;
+      var k = G.cells[r * G.cols + c]; if (k >= 0) return G.classes[k];
+    }
+    return null;
+  }
+
+  /* ---------- Grundwasserhöhe aus den Hydroisohypsen der Hydrogeologischen Karte (Typ 3/4 oberer Leiter, 5/6 tiefer Leiter) ---------- */
+  function isoHead(lat, lon, types) {
+    var cos = Math.cos(lat * Math.PI / 180), best = [];
+    ISOS.forEach(function (L) {
+      L.forEach(function (ln) {
+        if (types.indexOf(ln[0]) < 0) return;
+        var p = ln[2], md = 1e9;
+        for (var i = 2; i < p.length; i += 2) {
+          var ax = (p[i - 1] - lon) * 111320 * cos, ay = (p[i - 2] - lat) * 111320, bx = (p[i + 1] - lon) * 111320 * cos, by = (p[i] - lat) * 111320;
+          var dx = bx - ax, dy = by - ay, t = (dx * dx + dy * dy) ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / (dx * dx + dy * dy))) : 0;
+          var ex = ax + t * dx, ey = ay + t * dy, d = Math.sqrt(ex * ex + ey * ey);
+          if (d < md) md = d;
+        }
+        best.push({ d: md, v: ln[1] });
+      });
+    });
+    if (!best.length) return null;
+    best.sort(function (a, b) { return a.d - b.d; });
+    var a = best[0]; if (a.d > 6000) return null;
+    var b = null; for (var i = 1; i < best.length; i++) { if (best[i].v !== a.v) { b = best[i]; break; } }
+    if (b && b.d <= 8000 && Math.abs(b.v - a.v) <= 10) return { v: a.v + (b.v - a.v) * a.d / (a.d + b.d), pm: Math.max(1, Math.abs(b.v - a.v) / 2), d: a.d };
+    return { v: a.v, pm: 2, d: a.d };
+  }
+  /* ---------- Hydrogeologische Karte 1:50 000 (HYK50) am Standort ---------- */
+  var HYK_OBER = ["", "unbedeckter Grundwasserleiter in den Niederungen und Urstromtälern", "unbedeckter Grundwasserleiter auf Hochflächen", "oberflächennaher Grundwassergeringleiter, sandig",
+    "oberflächennaher Grundwassergeringleiter, bindig (Geschiebemergel, Lehm, Schluff, Ton)", "trockene Sande über einem Geringleiter", "Wechsel von Leiter und Geringleiter (Endmoränengebiet)"];
+  var HYK_MAECH = ["", "bis 3 m (oder gar nicht kartiert)", "3–10 m", "10–20 m", "20–30 m", "30–40 m", "40–50 m", "über 50 m"];
+  var HYK_SCHUTZ = ["", "unbedeckten Grundwasserleiterkomplex 1", "bedeckten Grundwasserleiterkomplex 1", "Grundwasserleiterkomplex 2"];
+  function hykAt(lat, lon) {
+    for (var i = 0; i < HYKS.length; i++) {
+      var G = HYKS[i];
+      var r = Math.round((lat - G.origin_lat) / G.step_lat), c = Math.round((lon - G.origin_lon) / G.step_lon);
+      if (r < 0 || c < 0 || r >= G.rows || c >= G.cols) continue;
+      var k = r * G.cols + c, a = +G.h1[k], b = +G.h2[k], s = +G.h3[k];
+      if (a || b || s) return { ober: a, maech: b, schutz: s };
+    }
+    return null;
+  }
+  function hykHtml(lat, lon) {
+    var x = hykAt(lat, lon), hr = hraumAt(lat, lon);
+    if (!x && !hr) return "";
+    x = x || { ober: 0, maech: 0, schutz: 0 };
+    var t = '<details class="more"><summary>Hydrogeologische Karte 1:50 000 (Land Brandenburg) am Standort</summary><ul class="meta" style="margin:6px 0 4px 18px;padding:0">';
+    if (hr) t += "<li>Landschaft: " + esc(hr.nat) + (hr.hnat ? " (" + esc(hr.hnat) + ")" : "") + (hr.tr ? "; Raum: " + esc(hr.tr) : "") + "</li>";
+    if (x.ober) t += "<li>Oberfläche: " + HYK_OBER[x.ober] + "</li>";
+    if (x.maech) t += "<li>Der tiefere, von Deckschichten überlagerte Grundwasserleiter (GWLK 2) ist hier insgesamt " + HYK_MAECH[x.maech] + " mächtig.</li>";
+    else t += "<li>Für den tieferen Grundwasserleiter (GWLK 2) nennt die Karte hier keine Mächtigkeit.</li>";
+    var ge = groundElev(lat, lon), ih = isoHead(lat, lon, [5, 6]);
+    if (ih) t += "<li>Grundwasserhöhe im tiefen Leiter laut Karte: etwa " + fmtN(ih.v) + " m über NHN (±" + fmtN(ih.pm, 0) + " m)" + (ge !== null ? ", also etwa " + fmtN(Math.max(0, ge - ih.v)) + " m unter Gelände" : "") + ". Das ist der Wasserstand, auf den du bei einem tiefen Brunnen ungefähr rechnen kannst.</li>";
+    if (x.schutz) t += "<li>Die Schutzfunktion der Überdeckung bezieht sich hier auf den " + HYK_SCHUTZ[x.schutz] + ".</li>";
+    return t + '</ul><p class="meta">Quelle: LBGR Brandenburg, HYK 50, per Rasterabfrage (250 m) aus der Kartenfarbe gelesen, daher nur ein grober Hinweis; die Mächtigkeit ist die Klasse der Karte, nicht die einer einzelnen Bohrung.</p></details>';
+  }
+
+  /* ---------- Wasserstand aus den Messstellen des Landes (Frühjahr und Herbst 2020) ---------- */
+  function groundElev(lat, lon) {
+    for (var i = 0; i < ELS.length; i++) {
+      var EL = ELS[i]; if (!EL || !EL.rows) continue;
+      var r = Math.round((lat - EL.origin_lat) / EL.step_lat), c = Math.round((lon - EL.origin_lon) / EL.step_lon);
+      if (r < 0 || c < 0 || r >= EL.rows || c >= EL.cols) continue;
+      var v = EL.dm[r * EL.cols + c]; if (v !== -32768) return v / 10;
+    }
+    return null;
+  }
+  function waterEstimate(lat, lon) {
+    var M = window.GW_MESS || [];
+    var near = [];
+    M.forEach(function (m) {
+      var d = dist(lat, lon, m[0], m[1]);
+      if (d <= 30000) near.push({ m: m, d: d, lv: (m[4] !== null && m[5] !== null) ? (m[4] + m[5]) / 2 : (m[4] !== null ? m[4] : m[5]) });
+    });
+    near.sort(function (a, b) { return a.d - b.d; });
+    if (!near.length) return null;
+    var use = near.slice(0, 5), sw = 0, sl = 0;
+    use.forEach(function (u) { var w = 1 / Math.pow(u.d + 500, 2); sw += w; sl += w * u.lv; });
+    var level = sl / sw, levelSrc = "Messstellen";
+    var iso1 = isoHead(lat, lon, [3, 4]);
+    if (iso1 && iso1.d <= 3000) { level = iso1.v; levelSrc = "Hydroisohypsen"; }
+    var isoDeep = isoHead(lat, lon, [5, 6]);
+    var ge = groundElev(lat, lon);
+    if (ge === null) { var hs = []; current.forEach(function (it) { if (it.b.h) hs.push(it.b.h); }); if (hs.length) ge = hs.reduce(function (a, b) { return a + b; }, 0) / hs.length; }
+    var lvs = use.map(function (u) { return u.lv; }), spread = Math.max.apply(null, lvs) - Math.min.apply(null, lvs);
+    var m0 = use[0].m, swing = (m0[11] !== null && m0[11] !== undefined && m0[12] !== null) ? " Die nächste Messstelle zeigte seit " + m0[14] + " Wasserstände zwischen " + fmtN(m0[6] - m0[12]) + " und " + fmtN(m0[6] - m0[11]) + " m unter Gelände." : "";
+    var q = use[0].d < 3000 && spread < 3 ? "gut" : use[0].d < 8000 && spread < 6 ? "mittel" : "grob";
+    var rows = near.slice(0, 5).map(function (u) {
+      var m = u.m, fl = m[4] !== null ? fmtN(m[6] - m[4]) + " m" : "–", fh = m[5] !== null ? fmtN(m[6] - m[5]) + " m" : "–";
+      return "<tr><td>" + esc(m[2]) + (m[9] ? " (Hauptleiter)" : "") + "</td><td>" + fmtM(u.d) + "</td><td>" + fl + " / " + fh + "</td><td>" + (m[7] !== null && m[8] !== null ? fmtN(m[7]) + "–" + fmtN(m[8]) + " m" : "–") + "</td></tr>";
+    }).join("");
+    var stations = '<details class="more"><summary>Messstellen des Landes in der Nähe (' + use.length + ' nächste)</summary><table class="layers"><tr><td class="meta">Messstelle</td><td class="meta">Abstand</td><td class="meta">Flurabstand Frühjahr / Herbst</td><td class="meta">Filter (m u. Gelände)</td></tr>' + rows +
+      '</table><p class="meta">Messwerte 2020 (LfU/LGB Brandenburg, Datenlizenz Deutschland Namensnennung 2.0). Der Filter zeigt, in welcher Tiefe die Messstelle Wasser fasst, also einen nachgewiesenen Grundwasserleiter.</p></details>';
+    var mess = near.filter(function (u) { return u.d <= 20000 && u.m[7] !== null && u.m[8] !== null; }).map(function (u) { return { d: u.d, lv: u.lv, fok: u.m[7], fuk: u.m[8], n: u.m[2] }; });
+    if (ge === null) return { depth: null, level: level, stations: stations, text: "", mess: mess, ge: null };
+    var depth = Math.max(0, ge - level);
+    return { depth: Math.round(depth * 10) / 10, level: level, q: q, ge: ge, mess: mess, spread: spread, isoDeep: isoDeep,
+             text: "geschätzt aus " + (levelSrc === "Hydroisohypsen" ? "den Grundwassergleichen der Hydrogeologischen Karte; nächste Messstelle in " : use.length + " Messstellen, nächste in ") + fmtM(use[0].d) + ", Spanne der Werte " + fmtN(spread) + " m, Genauigkeit " + q + " (gilt für den oberen Grundwasserleiter)." + swing, stations: stations, swing: swing.trim() };
+  }
+
   // Geschätztes Schichtenverzeichnis aus den ausgewählten Bohrungen mit gelesenen Schichten
   function estimate() {
     var sel = current.filter(function (it) { return it.on; });
@@ -423,8 +592,69 @@ if ("serviceWorker" in navigator && location.protocol === "https:") navigator.se
       var layers = it.b.l.map(function (l) { return { from: l[0], to: l[1], text: l[2], cat: l[3] }; });
       return { prof: { layers: layers, depthRead: layers[layers.length - 1].to }, d: it.d };
     });
+    var we = marker ? waterEstimate(marker.getLatLng().lat, marker.getLatLng().lng) : null;
+    if (we && marker) we.extra = hykHtml(marker.getLatLng().lat, marker.getLatLng().lng);
+    PROFIL.setWaterAuto(we);
     PROFIL.renderExpected(avgEl, items, sel.length, sel.length - withL.length);
+    plotCheck();
   }
+
+  /* ---------- Grundstück prüfen: welche Stelle ist für einen Brunnen am aussichtsreichsten? ---------- */
+  var plotLayer = L.layerGroup().addTo(map);
+  function compass(dx, dy) {
+    if (Math.hypot(dx, dy) < 1) return "in der Mitte";
+    var a = (Math.atan2(dx, dy) * 180 / Math.PI + 360) % 360, n = ["Norden", "Nordosten", "Osten", "Südosten", "Süden", "Südwesten", "Westen", "Nordwesten"];
+    return "im " + n[Math.round(a / 45) % 8];
+  }
+  function plotCheck() {
+    plotLayer.clearLayers();
+    var pb = document.getElementById("plotBox"); pb.innerHTML = "";
+    var R = parseInt(document.getElementById("plotSel").value, 10);
+    if (!R || !marker) return;
+    var c = marker.getLatLng(), cosl = Math.cos(c.lat * Math.PI / 180), step = Math.max(15, R / 5), pts = [];
+    for (var dy = -R; dy <= R; dy += step) for (var dx = -R; dx <= R; dx += step) {
+      if (dx * dx + dy * dy > R * R + 1) continue;
+      pts.push({ lat: c.lat + dy / 111320, lon: c.lng + dx / (111320 * cosl), dx: dx, dy: dy });
+    }
+    var cand = B.concat(window.EIGENE ? EIGENE.asBohrungen() : []).filter(function (b) { return b.l && dist(c.lat, c.lng, b.a, b.o) <= 1000 + R * 1.5; });
+    var we = waterEstimate(c.lat, c.lng), wl = we && we.depth !== null ? we.depth : null;
+    pts.forEach(function (p) {
+      var items = [];
+      cand.forEach(function (b) {
+        var d = dist(p.lat, p.lon, b.a, b.o); if (d > 1000) return;
+        var layers = b.l.map(function (l) { return { from: l[0], to: l[1], text: l[2], cat: l[3] }; });
+        items.push({ prof: { layers: layers, depthRead: layers[layers.length - 1].to }, d: d });
+      });
+      p.n = items.length; p.v = null;
+      if (items.length < 3) return;
+      p.near = Math.min.apply(null, items.map(function (it) { return it.d; }));
+      var hz = PROFIL.assessWells(items).filter(function (h) { return wl === null || h.to > wl; });
+      var shallow = hz.filter(function (h) { return h.from <= 60; }); if (shallow.length) hz = shallow;    // übliche Brunnentiefe bevorzugen
+      if (!hz.length) { p.v = 0; return; }
+      hz.sort(function (a, b) { return (b.score - a.score) || (a.from - b.from); });
+      p.v = hz[0].score; p.best = hz[0]; p.ge = groundElev(p.lat, p.lon);
+    });
+    var ok = pts.filter(function (p) { return p.v !== null; });
+    if (!ok.length) { pb.innerHTML = '<div class="box"><b>Grundstück:</b> Im Umfeld liegen zu wenige Bohrungen mit gelesenen Schichten für einen Vergleich.</div>'; return; }
+    var vmin = Math.min.apply(null, ok.map(function (p) { return p.v; })), vmax = Math.max.apply(null, ok.map(function (p) { return p.v; }));
+    var flat = vmax - vmin < 0.05;
+    ok.forEach(function (p) {
+      var t = flat ? 0.5 : (p.v - vmin) / (vmax - vmin);
+      L.circle([p.lat, p.lon], { radius: step * 0.52, stroke: false, fillColor: flat ? "#7a8fa6" : "hsl(" + Math.round(t * 120) + ",70%,45%)", fillOpacity: 0.55, interactive: false }).addTo(plotLayer);
+    });
+    var best = ok.slice().sort(function (a, b) { return (b.v - a.v) || (Math.hypot(a.dx, a.dy) - Math.hypot(b.dx, b.dy)); })[0];
+    var icon = L.divIcon({ className: "", html: '<div style="font-size:26px;line-height:26px;color:#0b6b2f;text-shadow:0 0 3px #fff,0 0 3px #fff">★</div>', iconSize: [26, 26], iconAnchor: [13, 13] });
+    L.marker([best.lat, best.lon], { icon: icon, interactive: false }).addTo(plotLayer);
+    var txt;
+    if (flat) txt = 'Auf diesem Grundstück sehen die Daten überall ähnlich aus. <b>Kein Bereich ist klar im Vorteil</b>; wähle nach Zugänglichkeit und Abstand zu Gebäuden, Stallungen und Sickergruben.';
+    else {
+      txt = '<b>Aussichtsreichster Bereich: ' + compass(best.dx, best.dy) + (Math.hypot(best.dx, best.dy) >= 1 ? ' (etwa ' + Math.round(Math.hypot(best.dx, best.dy)) + ' m vom gewählten Punkt)' : '') + '</b> (grüner Stern in der Karte).' +
+        (best.best ? ' Dort ' + best.best.from + ' – ' + best.best.to + ' m, Eignung ' + best.best.cls + (best.ge !== null && best.ge !== undefined ? ', Gelände ' + fmtN(best.ge) + ' m über NHN' : '') + '.' : '') +
+        ' Rot = ungünstiger, Grün = günstiger, jeweils im Vergleich innerhalb des Grundstücks.';
+    }
+    pb.innerHTML = '<div class="box"><b>Grundstück, Radius ' + R + ' m:</b> ' + txt + '<br><span class="meta">Die Unterschiede entstehen nur durch die Lage der nahen Bohrungen und sind bei kleinen Flächen oft kleiner als die Genauigkeit der Daten. Es ist ein Hinweis, keine Garantie; eine Probebohrung ersetzt er nicht. Abstand zu Verschmutzungsquellen und rechtliche Vorgaben (Anzeige beim Wasseramt, Mindestabstände) gelten unabhängig davon.</span></div>';
+  }
+  document.getElementById("plotSel").addEventListener("change", plotCheck);
 
   function select(i) {
     var it = current[i], b = it && it.b;
@@ -463,7 +693,7 @@ if ("serviceWorker" in navigator && location.protocol === "https:") navigator.se
     var q = document.getElementById("q").value.trim().toLowerCase();
     if (!q) return;
     var hit = BASE.orte.filter(function (o) { return o.n.toLowerCase() === q; })[0] || BASE.orte.filter(function (o) { return o.n.toLowerCase().indexOf(q) === 0; })[0];
-    if (!hit) { resultsEl.innerHTML = '<p class="hint">Ort nicht gefunden. Offline sind nur die Orte des Landkreises durchsuchbar, sonst direkt in die Karte tippen.</p>'; return; }
+    if (!hit) { resultsEl.innerHTML = '<p class="hint">Ort nicht gefunden. Offline sind nur die Orte der ausgewählten Landkreise durchsuchbar, sonst direkt in die Karte tippen.</p>'; return; }
     search(hit.lat, hit.lon);
   });
 })();
