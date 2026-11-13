@@ -38,18 +38,21 @@
       <option value="5000">5 km</option>
     </select>
   </label>
+  <label>Ansicht <select id="baseSel"><option value="map">Karte</option><option value="sat">Satellit</option></select></label>
+  <button type="button" class="ghost" id="btnSide" title="Infospalte ein- oder ausblenden">Infos ◂</button>
+  <details class="opts"><summary>Optionen</summary><div class="optpanel">
   <label>Grundstück <select id="plotSel"><option value="0">aus</option><option value="50">Radius 50 m</option><option value="100">Radius 100 m</option><option value="200">Radius 200 m</option><option value="400">Radius 400 m</option></select></label>
   <label><input type="checkbox" id="optPoints" checked> Bohrpunkte</label>
   <label><input type="checkbox" id="optRelief" checked> Relief</label>
   <label>Eignungskarte <select id="optEign"><option value="">aus</option><option value="0">Sand/Kies bei 5 m</option><option value="1">Sand/Kies bei 10 m</option><option value="2">Sand/Kies bei 20 m</option><option value="3">Sand/Kies bei 40 m</option><option value="4">Sand/Kies bei 60 m</option></select> <span class="hint" title="Wahrscheinlichkeit für Sand/Kies in dieser Tiefe, aus den Nachbarbohrungen gerechnet (500-m-Raster)" style="white-space:nowrap">hell = wenig, dunkelblau = wahrscheinlich</span></label>
-  <label>Ansicht <select id="baseSel"><option value="map">Karte</option><option value="sat">Satellit</option></select></label>
   <label><input type="checkbox" id="optNames" checked> Straßennamen</label>
   <label><input type="checkbox" id="optOwn" checked> Eigene Bohrungen</label>
   <button type="button" id="btnNewOwn">＋ Neue Bohrung</button>
   <button type="button" class="ghost" id="btnMyOwn">Meine Bohrungen</button>
+  <fieldset class="kreise"><legend>Landkreise in der Auswertung</legend><p class="hint">Alle Bohrungen der angehakten Landkreise fließen gemeinsam in die Umkreissuche ein, auch über Kreisgrenzen hinweg.</p><div id="kreisWahl"></div><p class="hint"><a href="#" id="kreiseAlle">Alle Landkreise anhaken</a> (lädt mehr Daten, auf dem iPhone besser nur die nötigen).</p></fieldset>
+  </div></details>
 </header>
 <main>
-  <fieldset class="kreise"><legend>Landkreise in der Auswertung</legend><p class="hint">Alle Bohrungen der angehakten Landkreise fließen gemeinsam in die Umkreissuche ein, auch über Kreisgrenzen hinweg.</p><div id="kreisWahl"></div><p class="hint"><a href="#" id="kreiseAlle">Alle Landkreise anhaken</a> (lädt mehr Daten, auf dem iPhone besser nur die nötigen).</p></fieldset>
   <div id="map" role="application" aria-label="Karte der ausgewählten Landkreise"></div>
   <aside id="side">
     <h2>Standort auswählen</h2>
@@ -75,6 +78,18 @@
 if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(function () {});
 </script>
 <script src="lib/leaflet.js"></script>
+<script>
+(function () {
+  var m = null, b = null;
+  document.addEventListener("DOMContentLoaded", function () {
+    m = document.querySelector("main"); b = document.getElementById("btnSide");
+    var aus = false; try { aus = localStorage.getItem("schichten.seite") === "aus"; } catch (e) {}
+    function set(a) { m.classList.toggle("side-off", a); b.textContent = a ? "Infos ▸" : "Infos ◂"; try { localStorage.setItem("schichten.seite", a ? "aus" : "an"); } catch (e) {} setTimeout(function () { window.dispatchEvent(new Event("resize")); }, 50); }
+    set(aus);
+    b.addEventListener("click", function () { set(!m.classList.contains("side-off")); });
+  });
+})();
+</script>
 <script src="data/messstellen.js?v=2"></script>
 <script src="data/kreise.js?v=1"></script>
 <script>

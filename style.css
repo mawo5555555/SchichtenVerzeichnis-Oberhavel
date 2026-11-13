@@ -10,18 +10,20 @@
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
-  body { font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); display: flex; flex-direction: column; }
-  header { padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; }
-  header h1 { font-size: 17px; margin: 0; font-weight: 650; }
+  body { font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); display: flex; flex-direction: column; }
+  header { position: relative; padding: 6px 12px; background: var(--panel); border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; }
+  header h1 { font-size: 15px; margin: 0; font-weight: 650; }
   .search { display: flex; gap: 6px; flex: 1 1 260px; max-width: 460px; }
   input[type=text], select { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; }
   input[type=text] { flex: 1; min-width: 0; }
   button { font: inherit; border: 0; border-radius: 8px; padding: 7px 13px; background: var(--accent); color: #fff; cursor: pointer; }
   button.ghost { background: var(--accent-soft); color: var(--accent); padding: 4px 10px; font-size: 13px; }
   label { color: var(--muted); font-size: 14px; display: inline-flex; gap: 6px; align-items: center; }
-  main { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 420px; }
-  #map { height: 100%; min-height: 320px; }
-  aside { background: var(--panel); border-left: 1px solid var(--line); overflow: auto; padding: 14px 16px 24px; }
+  main { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 340px; }
+  main.side-off { grid-template-columns: 1fr 0; }
+  main.side-off aside { display: none; }
+  #map { height: 100%; min-height: 360px; }
+  aside { background: var(--panel); border-left: 1px solid var(--line); overflow: auto; padding: 10px 12px 20px; font-size: 13px; }
   h2 { font-size: 15px; margin: 0 0 8px; }
   .hint { color: var(--muted); font-size: 14px; }
   .note { background: var(--warn-bg); color: var(--warn); border-radius: 8px; padding: 8px 10px; font-size: 13px; margin: 12px 0; }
@@ -78,9 +80,12 @@
     html, body { height: auto; }
     body { display: block; }
     main { display: block; min-height: 0; }
-    #map { height: 55vh; min-height: 280px; }
+    #map { height: 72vh; min-height: 320px; }
+    main.side-off { display: block; }
+    main.side-off aside { display: block; }
+    #btnSide { display: none; }
     aside { overflow: visible; border-left: 0; border-top: 1px solid var(--line); padding-bottom: 80px; }
-    header { position: static; }
+    header { position: relative; }
     #toMap { display: block !important; }
   }
   #toMap { display: none; position: fixed; right: 14px; bottom: calc(14px + env(safe-area-inset-bottom)); z-index: 1000; border-radius: 22px; padding: 10px 16px;
@@ -108,3 +113,24 @@ header button { white-space: nowrap; }
   .wells { border: 1px solid var(--line); border-left: 4px solid #b71c1c; border-radius: 8px; padding: 10px 12px; margin: 12px 0; }
   .wells h3 { margin: 0 0 6px; font-size: 15px; }
   .wells .wl { display: block; font-size: 13px; margin-bottom: 8px; }
+
+/* Kopfzeile kompakt, Nebenoptionen in einem Aufklappfeld, damit die Karte den Platz bekommt */
+header label { font-size: 13px; }
+header select, header input[type=text] { padding: 4px 8px; font-size: 13px; }
+header button { padding: 5px 11px; font-size: 13px; }
+.opts summary { cursor: pointer; list-style: none; background: var(--accent-soft); color: var(--accent); border-radius: 8px; padding: 5px 11px; font-size: 13px; user-select: none; }
+.opts summary::-webkit-details-marker { display: none; }
+.opts[open] summary { background: var(--accent); color: #fff; }
+.optpanel { position: absolute; right: 8px; top: calc(100% + 4px); z-index: 3000; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; display: grid; gap: 8px; width: 340px; max-width: calc(100vw - 16px); max-height: 80vh; overflow: auto; box-shadow: 0 6px 22px rgba(0,0,0,.28); }
+.optpanel label { justify-content: space-between; }
+.optpanel .hint { font-size: 12px; margin: 4px 0; }
+.optpanel fieldset.kreise { border: 0; border-top: 1px solid var(--line); margin: 4px 0 0; padding: 8px 0 0; }
+.optpanel fieldset.kreise legend { font-size: 13px; font-weight: 600; padding: 0 6px 0 0; }
+.optpanel fieldset.kreise label { justify-content: flex-start; font-size: 13px; display: flex; margin: 3px 0; }
+aside h2 { font-size: 14px; }
+.hint { font-size: 12.5px; }
+footer { padding: 3px 12px; font-size: 11px; }
+.optpanel { grid-template-columns: minmax(0, 1fr); }
+.optpanel select { max-width: 60%; }
+.optpanel .hint { overflow-wrap: anywhere; }
+.optpanel label:has(input[type=checkbox]) { justify-content: flex-start; }
