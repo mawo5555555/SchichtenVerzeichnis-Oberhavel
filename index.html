@@ -9,9 +9,12 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Wünschelroute">
-<meta name="theme-color" content="#183a5a">
+<meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="stylesheet" href="lib/leaflet.css">
 <link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="ios.css">
 <style>
   #map { background: #e9efe6; }
   .leaflet-container { font: inherit; }
@@ -23,7 +26,7 @@
 </head>
 <body>
 <header>
-  <h1>Wünschelroute 2.0 <span class="ver" title="Aktueller Stand der Seite">Version 14 · 13.11.2026</span></h1>
+  <h1>Wünschelroute 2.0 <span class="ver" title="Aktueller Stand der Seite">Version 16 · 13.11.2026</span></h1>
   <form class="search" id="searchForm">
     <input type="text" id="q" list="orte" placeholder="Ort suchen, z. B. Oranienburg oder Neuruppin" aria-label="Ort suchen">
     <datalist id="orte"></datalist>
@@ -55,6 +58,7 @@
 <main>
   <div id="map" role="application" aria-label="Karte der ausgewählten Landkreise"></div>
   <aside id="side">
+    <div class="grab" id="grab" role="separator" aria-label="Ergebnisblatt ziehen"></div>
     <h2>Standort auswählen</h2>
     <p class="hint">Tippe oder klicke in die Karte oder suche einen Ort. Die App berechnet sofort aus den Bohrungen im Umkreis ein geschätztes Schichtenverzeichnis mit Vermutung zu den Grundwasserleitern. Alles läuft ohne Internet.</p>
     <div id="ownPanel"></div>
@@ -70,7 +74,7 @@
 <button type="button" id="toMap" aria-label="Zurück zur Karte">↑ Karte</button>
 <footer>
   Daten: © <a href="https://lbgr.brandenburg.de" target="_blank" rel="noopener">Landesamt für Bergbau, Geologie und Rohstoffe Brandenburg</a>,
-  Datenlizenz Deutschland – Namensnennung – Version 2.0. Karte: © OpenStreetMap-Mitwirkende (ODbL). Luftbilder (Satellit, nur online): © GeoBasis-DE/LGB, dl-de/by-2-0. Prototyp, ohne Gewähr. Seite Nr. 14 (13.11.2026).
+  Datenlizenz Deutschland – Namensnennung – Version 2.0. Karte: © OpenStreetMap-Mitwirkende (ODbL). Luftbilder (Satellit, nur online): © GeoBasis-DE/LGB, dl-de/by-2-0. Prototyp, ohne Gewähr. Seite Nr. 16 (13.11.2026).
 </footer>
 
 <script>
@@ -559,13 +563,14 @@ if ("serviceWorker" in navigator && location.protocol === "https:") navigator.se
     boreMarkers.clearLayers();
     var list = current;
     if (!list.length) {
-      summaryEl.innerHTML = ""; resultsEl.innerHTML = '<h2>Keine Bohrung im Umkreis</h2><p class="hint">Im Umkreis von ' + fmtM(r) + ' liegt keine Bohrung mit Schichtenverzeichnis. Wähle einen größeren Umkreis.</p>';
+      summaryEl.innerHTML = ""; resultsEl.innerHTML = '<h2>Keine Bohrung im Umkreis</h2><p class="hint">Im Umkreis von ' + fmtM(r) + ' liegt keine Bohrung mit Schichtenverzeichnis. Die Schätzung unten stammt aus den nächsten Bohrungen weiter entfernt (bis 10 km). Je weiter die nächste Bohrung entfernt ist, desto unsicherer ist sie.</p>';
       avgEl.innerHTML = "";
+      estimate();
       return;
     }
     var html = '<h2>' + list.total + ' Bohrung' + (list.total > 1 ? 'en' : '') + ' im Umkreis von ' + fmtM(r) + '</h2>' +
       '<p class="hint">Nach Entfernung sortiert' + (list.total > list.length ? ', die nächsten ' + list.length + ' sind aufgeführt' : '') +
-      '. Grün = Schichten gelesen. Mit den Häkchen wählst du aus, was in die Schätzung eingeht.</p>' +
+      '. Grün = Schichten gelesen. Die Schätzung nutzt automatisch die 100 nächsten Bohrungen (bis 10 km). Wählst du hier Häkchen ab, gilt nur deine Auswahl; „Alle“ stellt die Automatik wieder her.</p>' +
       '<div class="tools"><button type="button" class="ghost" data-act="all">Alle</button><button type="button" class="ghost" data-act="none">Keine</button>' +
       '<button type="button" class="ghost" data-act="near10">Nächste 10</button></div><ul class="list">';
     list.forEach(function (it, i) {
@@ -747,16 +752,25 @@ if ("serviceWorker" in navigator && location.protocol === "https:") navigator.se
 
   // Geschätztes Schichtenverzeichnis aus den ausgewählten Bohrungen mit gelesenen Schichten
   function estimate() {
+    var manual = current.some(function (it) { return !it.on; });      // Nutzer hat Häkchen abgewählt: nur seine Auswahl zählt
     var sel = current.filter(function (it) { return it.on; });
-    var withL = sel.filter(function (it) { return it.b.l; });
-    var items = withL.map(function (it) {
-      var layers = it.b.l.map(function (l) { return { from: l[0], to: l[1], text: l[2], cat: l[3] }; });
-      return { prof: { layers: layers, depthRead: layers[layers.length - 1].to }, d: it.d };
-    });
+    var items, nSel, bad = 0, mode = "manual";
+    if (!manual && marker) {
+      var pp = marker.getLatLng();
+      items = PROFIL.nearestItems(B.concat(window.EIGENE ? EIGENE.asBohrungen() : []), pp.lat, pp.lng, dist);
+      nSel = items.length; mode = "auto";
+    } else {
+      var withL = sel.filter(function (it) { return it.b.l; });
+      items = withL.map(function (it) {
+        var layers = it.b.l.map(function (l) { return { from: l[0], to: l[1], text: l[2], cat: l[3] }; });
+        return { prof: { layers: layers, depthRead: layers[layers.length - 1].to }, d: it.d };
+      });
+      nSel = sel.length; bad = sel.length - withL.length;
+    }
     var we = marker ? waterEstimate(marker.getLatLng().lat, marker.getLatLng().lng) : null;
     if (we && marker) we.extra = hykHtml(marker.getLatLng().lat, marker.getLatLng().lng);
     PROFIL.setWaterAuto(we);
-    PROFIL.renderExpected(avgEl, items, sel.length, sel.length - withL.length);
+    PROFIL.renderExpected(avgEl, items, nSel, bad, mode);
     plotCheck();
   }
 
@@ -857,6 +871,71 @@ if ("serviceWorker" in navigator && location.protocol === "https:") navigator.se
     if (!hit) { resultsEl.innerHTML = '<p class="hint">Ort nicht gefunden. Offline sind nur die Orte der ausgewählten Landkreise durchsuchbar, sonst direkt in die Karte tippen.</p>'; return; }
     search(hit.lat, hit.lon);
   });
+})();
+</script>
+<script>
+/* Ergebnisblatt (iPhone): drei Raststufen klein, halb, groß; am Mac bleibt die Infospalte rechts */
+(function () {
+  var side = document.getElementById("side"), grab = document.getElementById("grab");
+  if (!side || !grab) return;
+  var ft = document.querySelector("footer");
+  if (ft) { var fi = document.createElement("div"); fi.className = "foot-in"; fi.innerHTML = ft.innerHTML; side.appendChild(fi); }
+  var main = side.parentNode, mq = window.matchMedia("(max-width: 800px)"), cur = "peek", lastClick = null;
+  function mh() { return main.clientHeight; }
+  function hOf(st) { return st === "peek" ? 128 : st === "half" ? Math.round(mh() * 0.5) : mh() - 6; }
+  function set(st, anim) {
+    cur = st; side.dataset.state = st;
+    if (!mq.matches) { side.style.height = ""; return; }
+    side.classList.remove("dragging"); side.style.height = hOf(st) + "px";
+    if (st === "peek") side.scrollTop = 0;
+  }
+  function nearest(h, v) {
+    var t = h + v * 160, best = "peek", bd = 1e9;
+    ["peek", "half", "full"].forEach(function (k) { var d = Math.abs(hOf(k) - t); if (d < bd) { bd = d; best = k; } });
+    return best;
+  }
+  var drag = null, moved = false;
+  function down(e) {
+    if (!mq.matches) return;
+    moved = false;
+    drag = { y: e.clientY, h: side.offsetHeight, last: e.clientY, t: e.timeStamp, v: 0 };
+    side.classList.add("dragging");
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (x) {}
+  }
+  function move(e) {
+    if (!drag) return;
+    if (Math.abs(drag.y - e.clientY) > 5) moved = true;
+    var h = Math.max(96, Math.min(mh() - 6, drag.h + (drag.y - e.clientY)));
+    side.style.height = h + "px";
+    var dt = e.timeStamp - drag.t; if (dt > 0) drag.v = (drag.last - e.clientY) / dt;   // Pixel je ms, nach oben positiv
+    drag.last = e.clientY; drag.t = e.timeStamp;
+  }
+  function up() {
+    if (!drag) return;
+    var st = nearest(side.offsetHeight, drag.v); drag = null; set(st);
+  }
+  [grab, side.querySelector("h2")].forEach(function (el) {
+    if (!el) return;
+    el.addEventListener("pointerdown", down); el.addEventListener("pointermove", move);
+    el.addEventListener("pointerup", up); el.addEventListener("pointercancel", up);
+  });
+  grab.addEventListener("click", function () { if (moved) { moved = false; return; } if (!mq.matches) return; set(cur === "peek" ? "half" : cur === "half" ? "full" : "peek"); });
+  // Wenn ein Ergebnis erscheint: Blatt auf halb, Karte so verschieben, dass der gewählte Punkt sichtbar bleibt
+  var tgt = document.getElementById("aquifer");
+  if (tgt && window.MutationObserver) new MutationObserver(function () {
+    if (!mq.matches || cur !== "peek" || !tgt.innerHTML.trim()) return;
+    set("half");
+    setTimeout(function () {
+      var m = window.MAP; if (!m || !lastClick) return;
+      var p = m.latLngToContainerPoint(lastClick), vis = mh() - hOf("half");
+      if (p.y > vis - 50 || p.y < 40) m.panBy([0, p.y - vis / 2], { animate: true });
+    }, 320);
+  }).observe(tgt, { childList: true });
+  function bindMap() { if (window.MAP) window.MAP.on("click", function (e) { lastClick = e.latlng; }); else setTimeout(bindMap, 200); }
+  bindMap();
+  window.addEventListener("resize", function () { set(cur); });
+  if (mq.addEventListener) mq.addEventListener("change", function () { set(mq.matches ? "peek" : cur); });
+  set("peek");
 })();
 </script>
 </body>

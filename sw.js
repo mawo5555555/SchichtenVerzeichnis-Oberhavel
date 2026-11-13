@@ -1,8 +1,8 @@
 /* Service Worker: legt beim ersten Aufruf alle Dateien der Seite im Speicher des Geräts ab, danach läuft sie ohne Internet.
  * Zum Aktualisieren der Daten die Versionsnummer VERSION erhöhen. */
-var VERSION = "brandenburg-14";
+var VERSION = "brandenburg-16";
 var DATEIEN = [
-  "./", "index.html", "style.css", "profil.js", "eigene.js", "manifest.webmanifest", "icon-180.png", "icon-512.png",
+  "./", "index.html", "style.css", "ios.css", "profil.js", "eigene.js", "manifest.webmanifest", "icon-180.png", "icon-512.png",
   "lib/leaflet.js", "lib/leaflet.css", "lib/images/layers.png", "lib/images/layers-2x.png",
   "lib/images/marker-icon.png", "lib/images/marker-icon-2x.png", "lib/images/marker-shadow.png",
   "data/messstellen.js", "data/kreise.js", "data/barnim/daten.js", "data/havelland/daten.js", "data/oberhavel/daten.js", "data/ostprignitz-ruppin/daten.js", "data/prignitz/daten.js", "data/uckermark/daten.js"

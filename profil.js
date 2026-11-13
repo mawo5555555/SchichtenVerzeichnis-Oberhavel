@@ -22,6 +22,7 @@
     var maxD = 0;
     items.forEach(function (it) { if (it.prof.depthRead > maxD) maxD = it.prof.depthRead; });
     maxD = Math.min(Math.ceil(maxD), 250);
+    var Wall = 0; items.forEach(function (it) { Wall += 1 / Math.pow(it.d + 100, 2); });
     var bins = [];
     for (var d = 0; d < maxD; d++) {
       var c = d + 0.5, gW = {}, cW = {}, tot = 0, cnt = 0;
@@ -38,12 +39,12 @@
           }
         }
       });
-      bins.push({ cnt: cnt, tot: tot, gW: gW, cW: cW });
+      bins.push({ cnt: cnt, tot: tot, gW: gW, cW: cW, cover: Wall ? tot / Wall : 0 });
     }
-    // bis zu welcher Tiefe tragen die Daten: mindestens 40 % der Bohrungen (mindestens 2, bei einer Bohrung 1)
-    var minN = items.length === 1 ? 1 : Math.max(2, Math.ceil(items.length * 0.4));
+    // bis zu welcher Tiefe tragen die Daten: Bohrungen, die diese Tiefe erreichen, haben mindestens 40 % des Gewichts (und mindestens 2 Bohrungen; bei einer Bohrung genügt sie)
+    function covered(b) { return items.length === 1 ? b.cnt >= 1 : (b.cnt >= 2 && b.cover >= 0.4); }
     var limit = 0, deep = 0;
-    for (var i = 0; i < bins.length; i++) { if (bins[i].cnt >= minN) limit = i + 1; else break; }
+    for (var i = 0; i < bins.length; i++) { if (covered(bins[i])) limit = i + 1; else break; }
     // tiefer als „gut belegt“ gibt es oft nur noch einzelne Bohrungen; sie werden trotzdem ausgewertet, aber als dünn belegt gekennzeichnet
     for (var i2 = 0; i2 < bins.length; i2++) { if (bins[i2].cnt >= 1) deep = i2 + 1; }
     // je Meter die häufigste Gesteinsgruppe, aufeinanderfolgende gleiche zu Schichten verbinden
@@ -54,8 +55,8 @@
       if (best === null) continue;
       var share = b.gW[best] / b.tot;
       var last = segs[segs.length - 1];
-      if (last && last.g === best) { last.to = m + 1; last.shareSum += share; last.minCnt = Math.min(last.minCnt, b.cnt); }
-      else segs.push({ g: best, from: m, to: m + 1, shareSum: share, minCnt: b.cnt });
+      if (last && last.g === best) { last.to = m + 1; last.shareSum += share; last.minCnt = Math.min(last.minCnt, b.cnt); last.minCover = Math.min(last.minCover, b.cover); }
+      else segs.push({ g: best, from: m, to: m + 1, shareSum: share, minCnt: b.cnt, minCover: b.cover });
     }
     // sehr dünne Schichten (unter 1,5 m) der größeren Nachbarschicht zuschlagen
     var changed = true;
@@ -67,13 +68,13 @@
         var prev = segs[s - 1], next = segs[s + 1];
         var tgt = (!prev) ? next : (!next) ? prev : ((prev.to - prev.from) >= (next.to - next.from) ? prev : next);
         tgt.from = Math.min(tgt.from, sg.from); tgt.to = Math.max(tgt.to, sg.to); tgt.shareSum += sg.shareSum;
-        tgt.minCnt = Math.min(tgt.minCnt, sg.minCnt);
+        tgt.minCnt = Math.min(tgt.minCnt, sg.minCnt); tgt.minCover = Math.min(tgt.minCover, sg.minCover);
         segs.splice(s, 1);
         // benachbarte gleiche Gruppen verbinden
         for (var q = segs.length - 1; q > 0; q--) {
           if (segs[q].g === segs[q - 1].g) {
             segs[q - 1].to = segs[q].to; segs[q - 1].shareSum += segs[q].shareSum;
-            segs[q - 1].minCnt = Math.min(segs[q - 1].minCnt, segs[q].minCnt); segs.splice(q, 1);
+            segs[q - 1].minCnt = Math.min(segs[q - 1].minCnt, segs[q].minCnt); segs[q - 1].minCover = Math.min(segs[q - 1].minCover, segs[q].minCover); segs.splice(q, 1);
           }
         }
         changed = true;
@@ -85,7 +86,7 @@
       var th = sg.to - sg.from;
       sg.conf = sg.shareSum / th;
       sg.aq = sg.g === "Sand/Kies" && th >= 2;
-      sg.thin = sg.minCnt < minN;                 // weniger Bohrungen als für eine gute Absicherung nötig
+      sg.thin = !(items.length === 1 || (sg.minCnt >= 2 && sg.minCover >= 0.4));   // zu wenig Gewicht der Bohrungen für eine gute Absicherung
       sg.name = sg.g;
       if (sg.g === "Sand/Kies") {
         var cw = {};
@@ -97,7 +98,25 @@
         sg.name = top ? "Sand/Kies, überwiegend " + top : "Sand/Kies";
       }
     });
-    return { segs: segs, limit: limit, deep: deep, minN: minN, maxD: maxD };
+    return { segs: segs, limit: limit, deep: deep, maxD: maxD };
+  }
+
+  /* Nachbarn für die Schätzung: die k nächsten Bohrungen mit gelesenen Schichten bis rMax Meter, unabhängig vom angezeigten Umkreis.
+     (Räumlicher Test, Bohrungen der Umgebung weggelassen: +2 bis +3 Punkte gegenüber höchstens 50 Bohrungen im 1-km-Umkreis, Brier-Wert 0,26 -> 0,21.) */
+  var EST_K = 100, EST_RMAX = 10000;
+  function nearestItems(bohrungen, lat, lon, distFn) {
+    var list = [];
+    for (var i = 0; i < bohrungen.length; i++) {
+      var b = bohrungen[i];
+      if (!b.l || !b.l.length) continue;
+      var d = distFn(lat, lon, b.a, b.o);
+      if (d <= EST_RMAX) list.push({ b: b, d: d });
+    }
+    list.sort(function (x, y) { return x.d - y.d; });
+    return list.slice(0, EST_K).map(function (it) {
+      var layers = it.b.l.map(function (l) { return { from: l[0], to: l[1], text: l[2], cat: l[3] }; });
+      return { prof: { layers: layers, depthRead: layers[layers.length - 1].to }, d: it.d };
+    });
   }
 
   /* ---------- Brunnen-Eignung: wo lohnt sich ein Filter? ---------- */
@@ -141,14 +160,15 @@
       for (var i = h.from; i < h.to; i++) { pm += bins[i].p; gm += bins[i].grain; nmin = Math.min(nmin, bins[i].n); nmax = Math.max(nmax, bins[i].n); }
       pm /= th; gm /= th;
       // wie viele Bohrungen durchörtern diesen Bereich tatsächlich als Sand/Kies (mindestens die halbe Strecke)
-      var hit = 0, reach = 0;
+      var hit = 0, reach = 0, hitW = 0, reachW = 0;
       items.forEach(function (it) {
         var p = it.prof;
         if (p.depthRead < h.from + th / 2) return;
-        reach++;
+        var wI = 1 / Math.pow(it.d + 100, 2);
+        reach++; reachW += wI;
         var cov = 0;
         p.layers.forEach(function (l) { if (isAquifer(l.cat)) cov += Math.max(0, Math.min(l.to, h.to) - Math.max(l.from, h.from)); });
-        if (cov >= th * 0.5) hit++;
+        if (cov >= th * 0.5) { hit++; hitW += wI; }
       });
       // Deckschicht: das Gestein direkt darüber (zwei Meter), wenn der Bereich nicht an der Oberfläche beginnt
       var cover = null;
@@ -165,7 +185,7 @@
         cover = best;
       }
       var bindig = cover && /Geschiebemergel|Ton|Schluff|Torf/.test(cover);
-      var score = 0.4 * Math.min(th / 10, 1) + 0.35 * (reach ? hit / reach : 0) + 0.25 * gm;
+      var score = 0.4 * Math.min(th / 10, 1) + 0.35 * (reachW ? hitW / reachW : 0) + 0.25 * gm;
       var enough = reach >= 3;
       var cls = score >= 0.7 && enough ? "gut" : score >= 0.5 ? "mittel" : "gering";
       if (!enough && cls === "gut") cls = "mittel";
@@ -197,7 +217,7 @@
     var A = WELL_STATE.auto, hasAuto = A && A.depth !== null && A.depth !== undefined;
     var w = WELL_STATE.wasser !== null ? WELL_STATE.wasser : (hasAuto ? A.depth : null);
     var nearD = Math.min.apply(null, items.map(function (it) { return it.d; }));
-    var rel = nearD < 500 ? ["gut", "im Rückwärtstest stimmte die Aussage Sand/Kies ja oder nein bei etwa 74 % der Meter"] : nearD < 1500 ? ["mittel", "im Test etwa 67 % der Meter"] : ["gering", "hier ist die Schätzung kaum besser als ein Tiefen-Mittelwert (im Test etwa 60 %)"];
+    var rel = nearD < 250 ? ["gut", "im Test (Bohrungen der Umgebung weggelassen) stimmte die Aussage Sand/Kies ja oder nein bei etwa 75 % der Meter"] : nearD < 1000 ? ["mittel", "im Test etwa 66 % der Meter"] : ["gering", "hier ist die Schätzung nur wenig besser als ein Tiefen-Mittelwert (im Test etwa 62 % der Meter bei 1 bis 2 km Abstand, der Tiefen-Mittelwert allein etwa 56 %)"];
     var head = '<div class="wells"><h3>Wo lohnt sich ein Brunnen?</h3>';
     var inp = '<label class="wl">Wasserstand (m unter Gelände) <input type="number" id="wlevel" min="0" max="100" step="0.5" placeholder="' + (hasAuto ? fmtN(A.depth) : '') + '" value="' + (WELL_STATE.wasser === null ? '' : WELL_STATE.wasser) + '" style="width:5em"> <span class="meta">' + (WELL_STATE.wasser !== null ? 'von dir eingegeben' : (hasAuto ? 'geschätzt' : 'unbekannt, kannst du eintragen')) + '</span></label>';
     var details = (A && A.extra ? A.extra : '') + (A && A.stations ? A.stations : '');
@@ -232,10 +252,10 @@
 
   function confText(c) { return c >= 0.75 ? "ziemlich einheitlich" : c >= 0.5 ? "teils uneinheitlich" : "unsicher"; }
 
-  function renderExpected(box, items, nSel, bad) {
+  function renderExpected(box, items, nSel, bad, mode) {
     if (!items.length) {
       box.innerHTML = '<h2>Erwartetes Schichtenverzeichnis</h2><p class="hint">Aus den Bohrungen in der Umgebung ließ sich kein Profil sicher auslesen' +
-        (bad ? ' (' + bad + ' nicht lesbar)' : '') + '. Wähle einen größeren Umkreis oder einen anderen Punkt.</p>';
+        (bad ? ' (' + bad + ' nicht lesbar)' : '') + '. Wähle einen anderen Punkt.</p>';
       return;
     }
     var r = buildExpected(items);
@@ -291,7 +311,7 @@
 
     var details = detailRows(items.map(function (it) { return it.prof; }));
     box.innerHTML = '<h2>Erwartetes Schichtenverzeichnis am gewählten Punkt</h2>' +
-      '<p class="hint">Aus ' + items.length + ' Bohrung' + (items.length > 1 ? 'en' : '') + ' der Umgebung gemittelt, nähere Bohrungen zählen stärker' +
+      '<p class="hint">' + (mode === 'auto' ? 'Aus den ' + items.length + ' nächsten Bohrungen mit gelesenen Schichten gemittelt (die nächste ' + fmtKm(Math.min.apply(null, items.map(function (it) { return it.d; }))) + ' entfernt, die entfernteste ' + fmtKm(Math.max.apply(null, items.map(function (it) { return it.d; }))) + '), nähere Bohrungen zählen deutlich stärker' : 'Aus ' + items.length + ' ausgewählten Bohrung' + (items.length > 1 ? 'en' : '') + ' gemittelt, nähere Bohrungen zählen deutlich stärker') +
       (bad ? ' (' + bad + ' nicht lesbar, nicht berücksichtigt)' : '') + '. Grober Anhaltspunkt, er ersetzt keine Bohrung. Gut belegt ist die Schätzung bis etwa ' + r.limit + ' m Tiefe' +
       (r.deep > r.limit ? '; darunter bis ' + r.deep + ' m stützt sie sich nur noch auf wenige Bohrungen (blasser dargestellt, „dünn belegt“)' : '') + '.</p>' +
       '<div class="synth" style="height:' + H + 'px"><div class="col" style="top:0;height:' + H + 'px">' + col + '</div>' + ticks + labs + '</div>' +
@@ -303,7 +323,7 @@
       '<div class="verdict">' + verdict + '</div>' + renderWells(items) + table +
       '<details class="more"><summary>Einzelheiten je Meter anzeigen</summary>' + details + '</details>';
     var wl = box.querySelector('#wlevel');
-    if (wl) wl.addEventListener('change', function () { var v = parseFloat(wl.value); WELL_STATE.wasser = isNaN(v) ? null : v; renderExpected(box, items, nSel, bad); });
+    if (wl) wl.addEventListener('change', function () { var v = parseFloat(wl.value); WELL_STATE.wasser = isNaN(v) ? null : v; renderExpected(box, items, nSel, bad, mode); });
   }
 
   function detailRows(profs) {
@@ -370,5 +390,5 @@
     return svg + '</svg>';
   }
 
-  global.PROFIL = { drawColumn: drawColumn, renderExpected: renderExpected, setWaterAuto: function (o) { WELL_STATE.auto = o; }, assessWells: assessWells, buildExpected: buildExpected, CAT_COL: CAT_COL, isAquifer: isAquifer, esc: esc, fmtN: fmtN };
+  global.PROFIL = { drawColumn: drawColumn, renderExpected: renderExpected, setWaterAuto: function (o) { WELL_STATE.auto = o; }, assessWells: assessWells, nearestItems: nearestItems, buildExpected: buildExpected, CAT_COL: CAT_COL, isAquifer: isAquifer, esc: esc, fmtN: fmtN };
 })(window);
