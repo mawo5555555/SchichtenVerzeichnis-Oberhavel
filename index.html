@@ -23,7 +23,7 @@
 </head>
 <body>
 <header>
-  <h1>Wünschelroute 2.0</h1>
+  <h1>Wünschelroute 2.0 <span class="ver" title="Aktueller Stand der Seite">Version 14 · 13.11.2026</span></h1>
   <form class="search" id="searchForm">
     <input type="text" id="q" list="orte" placeholder="Ort suchen, z. B. Oranienburg oder Neuruppin" aria-label="Ort suchen">
     <datalist id="orte"></datalist>
@@ -70,7 +70,7 @@
 <button type="button" id="toMap" aria-label="Zurück zur Karte">↑ Karte</button>
 <footer>
   Daten: © <a href="https://lbgr.brandenburg.de" target="_blank" rel="noopener">Landesamt für Bergbau, Geologie und Rohstoffe Brandenburg</a>,
-  Datenlizenz Deutschland – Namensnennung – Version 2.0. Karte: © OpenStreetMap-Mitwirkende (ODbL). Luftbilder (Satellit, nur online): © GeoBasis-DE/LGB, dl-de/by-2-0. Prototyp, ohne Gewähr.
+  Datenlizenz Deutschland – Namensnennung – Version 2.0. Karte: © OpenStreetMap-Mitwirkende (ODbL). Luftbilder (Satellit, nur online): © GeoBasis-DE/LGB, dl-de/by-2-0. Prototyp, ohne Gewähr. Seite Nr. 14 (13.11.2026).
 </footer>
 
 <script>
@@ -98,7 +98,7 @@ if ("serviceWorker" in navigator && location.protocol === "https:") navigator.se
   var sel = null; try { sel = JSON.parse(localStorage.getItem("schichten.kreise") || "null"); } catch (e) {}
   var liste = window.KREISE_LISTE || [];
   var an = liste.filter(function (k) { return sel && sel.indexOf(k.id) >= 0; });
-  if (/[?&]alle\b/.test(location.search)) an = liste;   // Mac-Offline-Paket: alle Landkreise
+  if (/[?&]alle\b/.test(location.search) || (location.protocol === "file:" && !(sel && sel.length))) an = liste;   // Mac-Offline-Paket (Datei direkt geöffnet): alle Landkreise
   if (!an.length) an = liste.filter(function (k) { return k.standard; });
   window.KREISE_AN = an.map(function (k) { return k.id; });
   an.forEach(function (k) { document.write('<script src="' + k.datei + '?v=11"><\/script>'); });
@@ -150,30 +150,139 @@ if ("serviceWorker" in navigator && location.protocol === "https:") navigator.se
     B.filter(function (b) { return b.l; }).length + " mit gelesenen Schichten.";
 
   /* ---------- Karte (nur Vektordaten, keine Kacheln) ---------- */
-  var map = L.map("map", { preferCanvas: true, minZoom: 9, maxZoom: 18, zoomSnap: 0.5, zoomControl: true });
+  var map = L.map("map", { preferCanvas: true, minZoom: 9, maxZoom: 18, zoomSnap: 0.5, zoomControl: true }); window.MAP = map;
   map.attributionControl.setPrefix(false);
   map.attributionControl.addAttribution("© OpenStreetMap-Mitwirkende · © LBGR Brandenburg");
   var kreisLayers = RINGS.map(function (r) { return L.polygon(r, { color: "#3b4a5a", weight: 2, fill: false, interactive: false }).addTo(map); });
   map.fitBounds(L.featureGroup(kreisLayers).getBounds());
 
-  var satMode = false, vecGroup = L.layerGroup().addTo(map);
-  var cv = L.canvas({ padding: 0.3 });
-  BASE.seen.forEach(function (s) { L.polygon(s.p, { renderer: cv, color: "#8fb6d9", weight: 1, fillColor: "#cfe3f3", fillOpacity: 1, interactive: false }).addTo(vecGroup); });
-  BASE.fluesse.forEach(function (f) { L.polyline(f.p, { renderer: cv, color: "#8fb6d9", weight: 1.5, interactive: false }).addTo(vecGroup); });
+  var satMode = false;
+  /* ---------- Karte: Linien, Flächen und Punkte werden als Kacheln aus Vektordaten gezeichnet (schnell, nur sichtbarer Ausschnitt) ---------- */
+  var GEO = (function () {
+    var CELL = 0.0001, MARG = 0.00006, KEY = 32768, grid = {}, stamp = 0;
+    function mx(lon) { return (lon + 180) / 360; }
+    function my(lat) { var sn = Math.sin(lat * Math.PI / 180); return 0.5 - Math.log((1 + sn) / (1 - sn)) / (4 * Math.PI); }
+    function put(f) {
+      var x0 = Math.floor(f.bb[0] / CELL), x1 = Math.floor(f.bb[2] / CELL), y0 = Math.floor(f.bb[1] / CELL), y1 = Math.floor(f.bb[3] / CELL);
+      for (var gx = x0; gx <= x1; gx++) for (var gy = y0; gy <= y1; gy++) { var k = gx * KEY + gy; (grid[k] || (grid[k] = [])).push(f); }
+    }
+    function addLine(kind, st, pts) {
+      if (!pts || pts.length < 2) return;
+      var n = pts.length, xy = new Float64Array(n * 2), a = 9, b = 9, c = -9, d = -9;
+      for (var i = 0; i < n; i++) {
+        var x = mx(pts[i][1]), y = my(pts[i][0]); xy[2 * i] = x; xy[2 * i + 1] = y;
+        if (x < a) a = x; if (y < b) b = y; if (x > c) c = x; if (y > d) d = y;
+      }
+      put({ k: kind, st: st, xy: xy, bb: [a, b, c, d], q: 0 });
+    }
+    function addRings(kind, st, p) {
+      if (!p || !p.length) return;
+      var rings = (Array.isArray(p[0]) && Array.isArray(p[0][0])) ? p : [p];
+      rings.forEach(function (r) { addLine(kind, st, r); });
+    }
+    // Höhenlinien: Teilstücke je Planquadrat zusammenfassen, damit nur sichtbare gezeichnet werden
+    var contBuf = {};
+    function addSegs(level, segs) {
+      var idx = (level % 25 === 0) ? 1 : 0;
+      segs.forEach(function (sg) {
+        var x1 = mx(sg[0][1]), y1 = my(sg[0][0]), x2 = mx(sg[1][1]), y2 = my(sg[1][0]);
+        var k = idx + "|" + Math.floor(x1 / CELL) + "|" + Math.floor(y1 / CELL), e = contBuf[k] || (contBuf[k] = { idx: idx, v: [] });
+        e.v.push(x1, y1, x2, y2);
+      });
+    }
+    function flushSegs() {
+      Object.keys(contBuf).forEach(function (k) {
+        var e = contBuf[k], v = e.v, a = 9, b = 9, c = -9, d = -9;
+        for (var i = 0; i < v.length; i += 2) { if (v[i] < a) a = v[i]; if (v[i] > c) c = v[i]; if (v[i + 1] < b) b = v[i + 1]; if (v[i + 1] > d) d = v[i + 1]; }
+        put({ k: "cont", st: e.idx, xy: Float64Array.from(v), bb: [a, b, c, d], q: 0 });
+      });
+      contBuf = {};
+    }
+    function query(x0, y0, x1, y1) {
+      stamp++; var out = [];
+      var gx0 = Math.floor((x0 - MARG) / CELL), gx1 = Math.floor((x1 + MARG) / CELL), gy0 = Math.floor((y0 - MARG) / CELL), gy1 = Math.floor((y1 + MARG) / CELL);
+      for (var gx = gx0; gx <= gx1; gx++) for (var gy = gy0; gy <= gy1; gy++) {
+        var a = grid[gx * KEY + gy]; if (!a) continue;
+        for (var i = 0; i < a.length; i++) {
+          var f = a[i]; if (f.q === stamp) continue; f.q = stamp;
+          if (f.bb[2] < x0 - MARG || f.bb[0] > x1 + MARG || f.bb[3] < y0 - MARG || f.bb[1] > y1 + MARG) continue;
+          out.push(f);
+        }
+      }
+      return out;
+    }
+    return { addLine: addLine, addRings: addRings, addSegs: addSegs, flushSegs: flushSegs, query: query, mx: mx, my: my };
+  })();
   var ROAD = { motorway: ["#d9822b", 3], trunk: ["#e0a243", 2.5], primary: ["#e8b85c", 2], secondary: ["#bdbdbd", 1.5] };
-  BASE.strassen.forEach(function (s) { var st = ROAD[s.k] || ["#ccc", 1]; L.polyline(s.p, { renderer: cv, color: st[0], weight: st[1], interactive: false }).addTo(vecGroup); });
-
-  // Detailebene (Nebenstraßen, Wohnstraßen, Bahn): erst ab Zoomstufe 13 gezeichnet, damit die Karte bei Übersicht flüssig bleibt
-  var detailLayer = L.layerGroup();
   var DET = { tertiary: ["#b9a36a", 2], unclassified: ["#9a9a9a", 1.4], residential: ["#a3a3a3", 1.3], living_street: ["#b5b5b5", 1.1], primary: ["#e8b85c", 2], secondary: ["#bdbdbd", 1.5] };
-  var detailCv = L.canvas({ padding: 0.2 });
-  (DETAIL.strassen || []).forEach(function (s) { var st = DET[s.k] || ["#ccc", 1]; L.polyline(s.p, { renderer: detailCv, color: st[0], weight: st[1], interactive: false }).addTo(detailLayer); });
-  (DETAIL.bahn || []).forEach(function (p) { L.polyline(p, { renderer: detailCv, color: "#7b7b7b", weight: 1.2, dashArray: "5 4", interactive: false }).addTo(detailLayer); });
-  function detailVisibility() { if (map.getZoom() >= 13 && !satMode) { if (!map.hasLayer(detailLayer)) detailLayer.addTo(map); } else if (map.hasLayer(detailLayer)) map.removeLayer(detailLayer); }
-  map.on("zoomend", detailVisibility); detailVisibility();
+  BASE.seen.forEach(function (s) { GEO.addRings("seen", null, s.p); });
+  BASE.fluesse.forEach(function (f) { GEO.addLine("fluss", null, f.p); });
+  BASE.strassen.forEach(function (s) { GEO.addLine("road", ROAD[s.k] || ["#ccc", 1], s.p); });
+  (DETAIL.strassen || []).forEach(function (s) { GEO.addLine("det", DET[s.k] || ["#ccc", 1], s.p); });
+  (DETAIL.bahn || []).forEach(function (p) { GEO.addLine("bahn", null, p); });
+  var contourOn = false;
+  function strokeLines(ctx, list, ppu, ox, oy) {
+    for (var q = 0; q < list.length; q++) {
+      var xy = list[q].xy, n = xy.length / 2, px = xy[0] * ppu - ox, py = xy[1] * ppu - oy, lx = px, ly = py;
+      ctx.moveTo(px, py);
+      for (var i = 1; i < n; i++) {
+        px = xy[2 * i] * ppu - ox; py = xy[2 * i + 1] * ppu - oy;
+        if (i < n - 1 && Math.abs(px - lx) < 0.8 && Math.abs(py - ly) < 0.8) continue;
+        ctx.lineTo(px, py); lx = px; ly = py;
+      }
+    }
+  }
+  function drawVecTile(ctx, z, tx, ty) {
+    var n = Math.pow(2, z), ppu = 256 * n, ox = tx * 256, oy = ty * 256, fs = GEO.query(tx / n, ty / n, (tx + 1) / n, (ty + 1) / n);
+    var seen = [], fl = [], roads = {}, dets = {}, bahn = [], cont = [[], []], i, f;
+    for (i = 0; i < fs.length; i++) {
+      f = fs[i];
+      if (f.k === "cont") cont[f.st].push(f);
+      else if (satMode) continue;
+      else if (f.k === "seen") seen.push(f);
+      else if (f.k === "fluss") fl.push(f);
+      else if (f.k === "road") (roads[f.st[0] + "|" + f.st[1]] || (roads[f.st[0] + "|" + f.st[1]] = { st: f.st, l: [] })).l.push(f);
+      else if (f.k === "det" && z >= 13) (dets[f.st[0] + "|" + f.st[1]] || (dets[f.st[0] + "|" + f.st[1]] = { st: f.st, l: [] })).l.push(f);
+      else if (f.k === "bahn" && z >= 13) bahn.push(f);
+    }
+    ctx.lineJoin = "round"; ctx.lineCap = "round";
+    if (seen.length) { ctx.beginPath(); strokeLines(ctx, seen, ppu, ox, oy); ctx.fillStyle = "#cfe3f3"; ctx.fill(); ctx.strokeStyle = "#8fb6d9"; ctx.lineWidth = 1; ctx.stroke(); }
+    if (fl.length) { ctx.beginPath(); strokeLines(ctx, fl, ppu, ox, oy); ctx.strokeStyle = "#8fb6d9"; ctx.lineWidth = 1.5; ctx.stroke(); }
+    var dk = Object.keys(dets).map(function (k) { return dets[k]; }).sort(function (a, b) { return a.st[1] - b.st[1]; });
+    dk.forEach(function (g) { ctx.beginPath(); strokeLines(ctx, g.l, ppu, ox, oy); ctx.strokeStyle = g.st[0]; ctx.lineWidth = g.st[1]; ctx.stroke(); });
+    if (bahn.length) { ctx.beginPath(); strokeLines(ctx, bahn, ppu, ox, oy); ctx.strokeStyle = "#7b7b7b"; ctx.lineWidth = 1.2; ctx.setLineDash([5, 4]); ctx.stroke(); ctx.setLineDash([]); }
+    var rk = Object.keys(roads).map(function (k) { return roads[k]; }).sort(function (a, b) { return a.st[1] - b.st[1]; });
+    rk.forEach(function (g) { ctx.beginPath(); strokeLines(ctx, g.l, ppu, ox, oy); ctx.strokeStyle = g.st[0]; ctx.lineWidth = g.st[1]; ctx.stroke(); });
+    if (contourOn && z >= 12) {
+      ctx.globalAlpha = 0.85; ctx.lineCap = "butt";
+      [[0, "#c2a77a", 0.7], [1, "#a07a45", 1.2]].forEach(function (c) {
+        var list = cont[c[0]]; if (!list.length) return;
+        ctx.beginPath();
+        list.forEach(function (ft) { var v = ft.xy; for (var j = 0; j < v.length; j += 4) { ctx.moveTo(v[j] * ppu - ox, v[j + 1] * ppu - oy); ctx.lineTo(v[j + 2] * ppu - ox, v[j + 3] * ppu - oy); } });
+        ctx.strokeStyle = c[1]; ctx.lineWidth = c[2]; ctx.stroke();
+      });
+      ctx.globalAlpha = 1;
+    }
+  }
+  function makeTileLayer(pane, drawFn, minZoom) {
+    var Cls = L.GridLayer.extend({
+      createTile: function (coords) {
+        var size = this.getTileSize(), dpr = window.devicePixelRatio || 1, t = document.createElement("canvas");
+        t.width = size.x * dpr; t.height = size.y * dpr;
+        var ctx = t.getContext("2d"); ctx.scale(dpr, dpr);
+        if (coords.z >= minZoom) drawFn(ctx, coords.z, coords.x, coords.y);
+        return t;
+      }
+    });
+    return new Cls({ pane: pane, tileSize: 256, updateWhenZooming: false, keepBuffer: 1, zIndex: 1 });
+  }
+  map.createPane("vec").style.zIndex = 380; map.createPane("pts").style.zIndex = 405;
+  var vecTiles = makeTileLayer("vec", drawVecTile, 0).addTo(map);
+  function detailVisibility() {}
+
 
   /* ---------- Topografie: Relief (Schummerung) und Höhenlinien aus dem Höhenraster ---------- */
-  var reliefLayers = [], contourGroup = L.layerGroup();
+  var reliefLayers = [];
   ELS.forEach(function (EL, kIdx) {
   var ring = RINGS[kIdx];
   if (EL && EL.rows) {
@@ -235,17 +344,16 @@ if ("serviceWorker" in navigator && location.protocol === "https:") navigator.se
       }
     }
     Object.keys(seg).forEach(function (k) {
-      var idx = (parseInt(k, 10) % 25 === 0);
-      L.polyline(seg[k], { renderer: detailCv, color: idx ? "#a07a45" : "#c2a77a", weight: idx ? 1.2 : 0.7, opacity: 0.85, interactive: false }).addTo(contourGroup);
+      GEO.addSegs(parseInt(k, 10), seg[k]);
     });
   }
   });
   function reliefVisibility() {
     var on = document.getElementById("optRelief").checked;
     reliefLayers.forEach(function (reliefLayer) { if (on) { if (!map.hasLayer(reliefLayer)) reliefLayer.addTo(map); } else if (map.hasLayer(reliefLayer)) map.removeLayer(reliefLayer); });
-    var cont = on && map.getZoom() >= 12;
-    if (cont) { if (!map.hasLayer(contourGroup)) contourGroup.addTo(map); } else if (map.hasLayer(contourGroup)) map.removeLayer(contourGroup);
+    if (on !== contourOn) { contourOn = on; vecTiles.redraw(); }
   }
+  GEO.flushSegs();
   map.on("zoomend", reliefVisibility); document.getElementById("optRelief").addEventListener("change", reliefVisibility); reliefVisibility();
 
   /* ---------- Straßennamen (auf die Straße gedreht, ab Zoomstufe 14) ---------- */
@@ -295,15 +403,13 @@ if ("serviceWorker" in navigator && location.protocol === "https:") navigator.se
     var rel = document.getElementById("optRelief");
     if (satMode) {
       satLayer.addTo(map); satLayer.bringToBack();
-      if (map.hasLayer(vecGroup)) map.removeLayer(vecGroup);
       reliefBefore = rel.checked; rel.checked = false;
     } else {
       if (map.hasLayer(satLayer)) map.removeLayer(satLayer);
-      if (!map.hasLayer(vecGroup)) vecGroup.addTo(map);
       if (reliefBefore !== null) rel.checked = reliefBefore;
     }
     kreisLayers.forEach(function (kl) { kl.setStyle({ color: satMode ? "#ffd54f" : "#3b4a5a" }); });
-    reliefVisibility(); detailVisibility(); drawLabels();
+    reliefVisibility(); vecTiles.redraw(); drawLabels(); if (placeCv) drawPlaces();
     document.getElementById("baseSel").value = mode;
     try { localStorage.setItem("schichten.basis", mode); } catch (e) {}
   }
@@ -311,35 +417,75 @@ if ("serviceWorker" in navigator && location.protocol === "https:") navigator.se
   try { if (localStorage.getItem("schichten.basis") === "sat") setBase("sat"); } catch (e) {}
 
 
-  // Orte in Stufen, damit die Karte beim Hineinzoomen immer mehr zeigt: Städte, Dörfer, Ortsteile und Weiler, kleine Siedlungen und Einzelhöfe
+  // Orte in Stufen, damit die Karte beim Hineinzoomen immer mehr zeigt: Städte, Dörfer, Ortsteile und Weiler, kleine Siedlungen und Einzelhöfe.
+  // Sie werden auf eine eigene Zeichenfläche gemalt (nur der sichtbare Ausschnitt), nicht als tausende einzelne Kartenelemente.
   var PLACE_TIER = { city: 0, town: 0, village: 1, suburb: 2, quarter: 2, hamlet: 2, neighbourhood: 3, locality: 3, isolated_dwelling: 3, farm: 3 };
   var TIER_ZOOM = [0, 11.5, 12.5, 14];
-  var tierLayers = [L.layerGroup().addTo(map), L.layerGroup(), L.layerGroup(), L.layerGroup()];
-  var dl = document.getElementById("orte"), seenNames = {};
+  var PSTY = [{ f: "600 12px", r: 2.6, c: "#26303b" }, { f: "500 11px", r: 2.6, c: "#26303b" }, { f: "500 10.5px", r: 2.4, c: "#26303b" }, { f: "400 10px", r: 1.9, c: "#4a5560" }];
+  var dl = document.getElementById("orte"), seenNames = {}, PLACES = [];
   BASE.orte.forEach(function (o) {
     var tier = PLACE_TIER[o.t] != null ? PLACE_TIER[o.t] : 3;
-    var cls = tier === 0 ? "town" : tier === 1 ? "village" : tier === 2 ? "village hamlet" : "village small";
-    L.circleMarker([o.lat, o.lon], { radius: tier >= 3 ? 1.8 : 2.5, color: "#26303b", weight: 1, fillColor: "#fff", fillOpacity: 1, interactive: false }).addTo(tierLayers[tier])
-      .bindTooltip(o.n, { permanent: true, direction: "right", offset: [4, 0], className: "place " + cls });
+    PLACES.push({ n: o.n, lat: o.lat, lon: o.lon, tier: tier });
     if (!seenNames[o.n]) { seenNames[o.n] = 1; var opt = document.createElement("option"); opt.value = o.n; dl.appendChild(opt); }
   });
-  function villageVisibility() {
-    var z = map.getZoom();
-    tierLayers.forEach(function (lg, i) {
-      if (z >= TIER_ZOOM[i]) { if (!map.hasLayer(lg)) lg.addTo(map); } else if (map.hasLayer(lg)) map.removeLayer(lg);
-    });
+  PLACES.sort(function (a, b) { return a.tier - b.tier; });
+  var placeCv = document.createElement("canvas");
+  placeCv.style.cssText = "position:absolute;left:0;top:0;pointer-events:none;z-index:440";
+  map.getContainer().appendChild(placeCv);
+  function drawPlaces() {
+    var size = map.getSize(), dpr = window.devicePixelRatio || 1, ctx = placeCv.getContext("2d");
+    if (placeCv.width !== Math.round(size.x * dpr) || placeCv.height !== Math.round(size.y * dpr)) { placeCv.width = Math.round(size.x * dpr); placeCv.height = Math.round(size.y * dpr); placeCv.style.width = size.x + "px"; placeCv.style.height = size.y + "px"; }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, size.x, size.y);
+    var z = map.getZoom(), bn = map.getBounds().pad(0.03), s0 = bn.getSouth(), n0 = bn.getNorth(), w0 = bn.getWest(), e0 = bn.getEast(), placed = [];
+    ctx.textBaseline = "middle"; ctx.lineJoin = "round";
+    for (var i = 0; i < PLACES.length; i++) {
+      var p = PLACES[i];
+      if (z < TIER_ZOOM[p.tier]) break;
+      if (p.lat < s0 || p.lat > n0 || p.lon < w0 || p.lon > e0) continue;
+      var pt = map.latLngToContainerPoint([p.lat, p.lon]), st = PSTY[p.tier];
+      ctx.font = st.f + " -apple-system, system-ui, sans-serif";
+      var tw = ctx.measureText(p.n).width, rx = pt.x + 5, ry = pt.y - 7, clash = false;
+      for (var q = 0; q < placed.length; q++) { var r = placed[q]; if (rx < r.x + r.w && rx + tw + 2 > r.x && ry < r.y + r.h && ry + 14 > r.y) { clash = true; break; } }
+      if (clash) continue;
+      placed.push({ x: rx, y: ry, w: tw + 2, h: 14 });
+      ctx.beginPath(); ctx.arc(pt.x, pt.y, st.r, 0, 6.2832); ctx.fillStyle = "#fff"; ctx.fill(); ctx.lineWidth = 1; ctx.strokeStyle = st.c; ctx.stroke();
+      ctx.textAlign = "left"; ctx.lineWidth = 3;
+      ctx.strokeStyle = satMode ? "rgba(0,0,0,.85)" : "rgba(255,255,255,.9)"; ctx.strokeText(p.n, rx, pt.y);
+      ctx.fillStyle = satMode ? "#fff" : st.c; ctx.fillText(p.n, rx, pt.y);
+    }
   }
-  map.on("zoomend", villageVisibility); villageVisibility();
+  var placeRaf = 0;
+  function placesSoon() { if (!placeRaf) placeRaf = requestAnimationFrame(function () { placeRaf = 0; drawPlaces(); }); }
+  map.on("move resize", placesSoon);
+  map.on("zoomstart", function () { placeCv.getContext("2d").clearRect(0, 0, placeCv.width, placeCv.height); });
+  map.on("zoomend", drawPlaces); drawPlaces();
+  // Straßennamen sind aufwendiger zu berechnen: während der Bewegung ausblenden, danach neu setzen
+  map.on("movestart zoomstart", function () { labelCv.getContext("2d").clearRect(0, 0, labelCv.width, labelCv.height); });
 
-  var pointsLayer = L.layerGroup();
-  B.forEach(function (b) {
-    L.circleMarker([b.a, b.o], { renderer: cv, radius: 2.5, weight: 0, fillColor: b.l ? "#2e7d32" : "#8a94a0", fillOpacity: 0.8, interactive: false }).addTo(pointsLayer);
-  });
-  function pointsVisibility() {
-    var want = document.getElementById("optPoints").checked && map.getZoom() >= 11;
-    if (want) { if (!map.hasLayer(pointsLayer)) pointsLayer.addTo(map); } else if (map.hasLayer(pointsLayer)) map.removeLayer(pointsLayer);
-  }
-  map.on("zoomend", pointsVisibility); document.getElementById("optPoints").addEventListener("change", pointsVisibility); pointsVisibility();
+  var ptTiles = makeTileLayer("pts", function (ctx, z, tx, ty) {
+    if (!document.getElementById("optPoints").checked || z < 11) return;
+    var n = Math.pow(2, z), ppu = 256 * n, ox = tx * 256, oy = ty * 256, lst = BPTS.query(tx / n, ty / n, (tx + 1) / n, (ty + 1) / n);
+    ctx.globalAlpha = 0.8;
+    [["#2e7d32", 1], ["#8a94a0", 0]].forEach(function (c) {
+      ctx.beginPath();
+      lst.forEach(function (b) { if (b.l !== c[1]) return; var x = b.x * ppu - ox, y = b.y * ppu - oy; ctx.moveTo(x + 2.5, y); ctx.arc(x, y, 2.5, 0, 6.2832); });
+      ctx.fillStyle = c[0]; ctx.fill();
+    });
+    ctx.globalAlpha = 1;
+  }, 11);
+  // Bohrpunkte in einem Raster ablegen, damit je Kachel nur die nahen gezeichnet werden
+  var BPTS = (function () {
+    var CELL = 0.0001, KEY = 32768, g = {};
+    B.forEach(function (b) { var x = GEO.mx(b.o), y = GEO.my(b.a), k = Math.floor(x / CELL) * KEY + Math.floor(y / CELL); (g[k] || (g[k] = [])).push({ x: x, y: y, l: b.l ? 1 : 0 }); });
+    return { query: function (x0, y0, x1, y1) {
+      var out = [], m = 0.00003;
+      for (var gx = Math.floor((x0 - m) / CELL); gx <= Math.floor((x1 + m) / CELL); gx++) for (var gy = Math.floor((y0 - m) / CELL); gy <= Math.floor((y1 + m) / CELL); gy++) { var a = g[gx * KEY + gy]; if (a) for (var i = 0; i < a.length; i++) out.push(a[i]); }
+      return out;
+    } };
+  })();
+  ptTiles.addTo(map);
+  function pointsVisibility() { ptTiles.redraw(); }
+  document.getElementById("optPoints").addEventListener("change", pointsVisibility);
 
   /* ---------- Hilfsfunktionen ---------- */
   function dist(lat1, lon1, lat2, lon2) {
